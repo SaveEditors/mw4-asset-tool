@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.7-beta — More quality-of-life
+
+- **Recent folders** menu to re-open a previously imported game folder in one click (with a
+  "clear recent folders" option).
+- **Copy image** — copy the decoded preview to the clipboard.
+- **Reveal in Explorer** — jump to the last export from the status bar.
+- **Ctrl + scroll** over the thumbnail grid to zoom the tile size.
+
 ## 0.9.6-beta — Quality-of-life polish
 
 ### Sidebar

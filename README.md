@@ -24,7 +24,7 @@ launching, patching, or injecting into the game.
 > **Read-only and offline.** MW4 Asset Tool never runs the game, never touches game memory,
 > and never interacts with anti-cheat. It only reads files you already own on disk.
 
-> **Beta (0.9.5).** This is an early release. Extraction and decompression are solid, and
+> **Beta (0.9.7).** This is an early release. Extraction and decompression are solid, and
 > texture format auto-detection is much improved and now **learns from your corrections** —
 > but it is still a heuristic on headerless data, so some textures need the manual **show all
 > formats** override, and per-asset names are not resolved (assets are shown by hash). See
@@ -37,7 +37,7 @@ see [Requirements](#requirements) for supported Windows 10 editions.
 
 | Package | Choose it for | System behavior |
 | --- | --- | --- |
-| **Portable ZIP** — `MW4AssetTool-0.9.5-beta-win-x64.zip` | A movable, self-contained folder | Extract and run `MW4AssetTool.exe`. Performs no installation and makes no `PATH` changes. Thumbnail cache lives under `%LOCALAPPDATA%\MW4FFTool`. |
+| **Portable ZIP** — `MW4AssetTool-0.9.7-beta-win-x64.zip` | A movable, self-contained folder | Extract and run `MW4AssetTool.exe`. Performs no installation and makes no `PATH` changes. Thumbnail cache lives under `%LOCALAPPDATA%\MW4FFTool`. |
 | **Build from source** | Developers and contributors | Requires the .NET 10 SDK. See [Build from source](#build-from-source). |
 
 > **Unsigned release:** MW4 Asset Tool is intentionally unsigned. Windows may display
@@ -45,8 +45,8 @@ see [Requirements](#requirements) for supported Windows 10 editions.
 > the Releases page before running.
 
 ```powershell
-Get-FileHash .\MW4AssetTool-0.9.5-beta-win-x64.zip -Algorithm SHA256
-Get-Content .\MW4AssetTool-0.9.5-beta-win-x64.zip.sha256
+Get-FileHash .\MW4AssetTool-0.9.7-beta-win-x64.zip -Algorithm SHA256
+Get-Content .\MW4AssetTool-0.9.7-beta-win-x64.zip.sha256
 ```
 
 The hash printed by `Get-FileHash` must match the value in its downloaded checksum file.
