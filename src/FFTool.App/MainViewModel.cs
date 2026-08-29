@@ -129,27 +129,15 @@ public sealed class AssetRow : ViewModelBase
         if (IsImageShaped && DimensionGuesser.Best((long)entry.DecompressedSize) is { } g)
         {
             GuessW = g.Width; GuessH = g.Height;
-            double ar = (double)g.Width / g.Height;
-            int maxDim = Math.Max(g.Width, g.Height);
-            bool square = Math.Abs(ar - 1.0) < 0.05;
-            bool wide = ar >= 1.6;
-            bool tall = ar <= 0.625;
-
-            // Size + shape → likely UI role (icons/ranks are small square; loadscreens are large wide).
-            AspectClass =
-                  square && maxDim <= 128  ? "Icon (small)"            // rank badges, small UI icons
-                : square && maxDim <= 512  ? "Icon / emblem (square)"  // emblems, calling-card squares, medals
-                : square                   ? "Large square (compass)"  // compass/minimap
-                : wide && maxDim >= 1024   ? "Loading screen (wide)"   // loadscreens/banners
-                : wide                     ? "Banner (wide)"
-                : tall                     ? "Poster (tall)"
-                : "Standard";
+            double ar = (double)g.Width / g.Height;      // simple shape bucket, no role guessing
+            Shape = ar > 1.25 ? "Wide" : ar < 0.8 ? "Tall" : "Square";
         }
     }
 
     public int GuessW { get; }
     public int GuessH { get; }
-    public string AspectClass { get; } = "";
+    /// <summary>Simple shape bucket for filtering: Square / Wide / Tall (empty for non-images).</summary>
+    public string Shape { get; } = "";
     public string Dims => GuessW > 0 ? $"{GuessW}×{GuessH}" : "";
 
     public KapiAssetEntry Entry { get; }
@@ -657,9 +645,9 @@ public sealed class MainViewModel : ViewModelBase
         try
         {
             using var w = new StreamWriter(dlg.FileName);
-            w.WriteLine("name_or_hash,hash,type,ui_role,width,height,decompressed_bytes,compressed_bytes,offset,package");
+            w.WriteLine("name_or_hash,hash,type,shape,width,height,decompressed_bytes,compressed_bytes,offset,package");
             foreach (var r in _allAssets)
-                w.WriteLine($"{Csv(r.DisplayName)},{r.Hash},{r.Kind},{Csv(r.AspectClass)}," +
+                w.WriteLine($"{Csv(r.DisplayName)},{r.Hash},{r.Kind},{Csv(r.Shape)}," +
                             $"{r.GuessW},{r.GuessH},{r.Decompressed},{r.Compressed},{r.Offset},{Csv(pkgName)}");
             Status = $"Exported {_allAssets.Count:N0}-row catalog → {Path.GetFileName(dlg.FileName)}";
         }
@@ -946,9 +934,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public IReadOnlyList<string> CategoryFilters { get; } =
     [
-        "All assets", "Images",
-        "Icons / ranks (small)", "Emblems / cards (square)", "Compass (large square)",
-        "Loading screens (wide)", "Data",
+        "All assets", "Images", "Square", "Wide", "Tall", "Data",
         "New (since update)", "Changed (since update)",
     ];
 
@@ -1035,8 +1021,21 @@ public sealed class MainViewModel : ViewModelBase
     public bool AssetsLoaded => _allAssets.Count > 0;
 
     /// <summary>All loaded assets sorted by ascending global offset (for address/jump tabs).</summary>
-    public IReadOnlyList<AssetRow> AssetsByOffset() =>
-        _allAssets.OrderBy(r => r.Entry.Offset).ToList();
+    /// <summary>
+    /// Ready the main view for an address jump: clear search/filters so every asset is visible,
+    /// order by offset, and switch to the table (the natural home for offset navigation) so the
+    /// target row can be selected and scrolled to. (Replaces the old AssetsByOffset tab approach.)
+    /// </summary>
+    public void PrepareForJump()
+    {
+        if (_assetSearch.Length > 0) { _assetSearch = ""; Raise(nameof(AssetSearch)); }
+        _textMatches = null;
+        if (_categoryFilter != "All assets")
+        { _categoryFilter = "All assets"; Raise(nameof(CategoryFilter)); Raise(nameof(ShowingUpdatesOnly)); }
+        AssetsView?.Refresh();
+        SortBy = "Offset (file order)";
+        GridMode = false;   // table view
+    }
 
     /// <summary>The asset at/after the given global offset (nearest by address).</summary>
     public AssetRow? NearestByAddress(ulong addr)
@@ -1326,15 +1325,11 @@ public sealed class MainViewModel : ViewModelBase
         if (_categoryFilter == "New (since update)" && !r.IsNew) return false;
         if (_categoryFilter == "Changed (since update)" && !r.IsChanged) return false;
 
-        // Category / UI-role filter. Grid always implies images.
-        bool roleFilter = _categoryFilter is "Icons / ranks (small)" or "Emblems / cards (square)"
-                          or "Compass (large square)" or "Loading screens (wide)";
-        bool wantImages = _gridMode || _categoryFilter == "Images" || roleFilter;
+        // Category filter. Shape filters (Square/Wide/Tall) imply images. Grid always implies images.
+        bool shapeFilter = _categoryFilter is "Square" or "Wide" or "Tall";
+        bool wantImages = _gridMode || _categoryFilter == "Images" || shapeFilter;
         if (wantImages && r.Category != "Image") return false;
-        if (_categoryFilter == "Icons / ranks (small)" && r.AspectClass != "Icon (small)") return false;
-        if (_categoryFilter == "Emblems / cards (square)" && r.AspectClass != "Icon / emblem (square)") return false;
-        if (_categoryFilter == "Compass (large square)" && r.AspectClass != "Large square (compass)") return false;
-        if (_categoryFilter == "Loading screens (wide)" && r.AspectClass != "Loading screen (wide)") return false;
+        if (shapeFilter && r.Shape != _categoryFilter) return false;
         if (!_gridMode && _categoryFilter == "Data" && r.Category != "Data") return false;
         // In the grid, drop tiles that decoded and scored as non-images.
         if (_gridMode && r.IsImage == false) return false;

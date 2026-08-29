@@ -50,24 +50,9 @@
                     <Button Content="Load names…" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
                             Command="{Binding LoadNamesCommand}"
                             ToolTip="Import a hash→name list from Cordycep/Saluki or a community list (CSV/TXT/JSON)"/>
-                    <Button Content="CSV (package)" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportCsvCommand}"
-                            ToolTip="Export the selected package's asset catalog to CSV"/>
-                    <Button Content="CSV (all)" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportCsvAllCommand}"
-                            ToolTip="Export a full game manifest — every package's assets — to one CSV (~706k rows)"/>
-                    <Button Content="Images ▾" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportImagesCommand}"
-                            ToolTip="Export this package's detected images as PNG + DDS"/>
-                    <Button Content="All images" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportImagesAllCommand}"
-                            ToolTip="Export EVERY package's detected images as PNG + DDS (large)"/>
-                    <Button Content="Export package…" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportPackageCommand}"
-                            ToolTip="Export the whole selected package's raw assets  (Ctrl+Shift+E)"/>
-                    <Button Content="Export game…" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportGameCommand}"
-                            ToolTip="Export every package's raw assets (large)"/>
+                    <Button x:Name="ExportButton" Content="Export ▾" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
+                            Click="ExportMenu_Click"
+                            ToolTip="Export images, raw assets, or a CSV catalog — for the selected package or the whole game"/>
                     <Button x:Name="RecentButton" Content="Recent ▾" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
                             Click="RecentFolders_Click"
                             Visibility="{Binding HasRecentFolders, Converter={x:Static local:BoolToVis.Instance}}"
@@ -288,9 +273,6 @@
                     </Grid>
                 </Border>
                 <Grid>
-                <TabControl x:Name="AssetTabs" Background="{StaticResource SurfaceBrush}" BorderThickness="0"
-                            Style="{StaticResource DarkTabControl}">
-                  <TabItem Header="Browse" Style="{StaticResource DarkTabItem}">
                 <Grid>
                     <!-- Content files view (shown when browsing Content / Maps) -->
                     <DataGrid Style="{StaticResource DarkDataGrid}" ItemsSource="{Binding ContentFiles}"
@@ -332,10 +314,11 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Name / hash" Binding="{Binding DisplayName}" Width="2*">
+                            <DataGridTextColumn Header="Name / hash" Binding="{Binding DisplayName}" Width="Auto">
                                 <DataGridTextColumn.ElementStyle>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="FontFamily" Value="{StaticResource MonoFont}"/>
+                                        <Setter Property="Margin" Value="0,0,16,0"/>
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
@@ -427,8 +410,6 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
-                  </TabItem>
-                </TabControl>
 
                     <!-- Center empty-state: shown when no package's assets are loaded. -->
                     <Border Background="{StaticResource SurfaceBrush}" IsHitTestVisible="False"
@@ -450,8 +431,8 @@
             <!-- Inspector -->
             <Border Grid.Column="4" Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
-                <StackPanel>
-                    <TextBlock Text="INSPECTOR" Style="{StaticResource PaneHeader}"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="0,12,0,4">
 
                     <!-- Empty-state guidance when nothing is selected. -->
                     <StackPanel Margin="14,8" Visibility="{Binding NothingSelected, Converter={x:Static local:BoolToVis.Instance}}">
@@ -496,146 +477,161 @@
                         </Border>
                     </StackPanel>
 
-                    <StackPanel Margin="12,4" Visibility="{Binding HasAsset,
-                                Converter={x:Static local:BoolToVis.Instance}}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="{Binding SelectedAsset.Hash}" FontFamily="{StaticResource MonoFont}"
-                                       Foreground="{StaticResource AccentBrush}" FontSize="14" TextWrapping="Wrap"
-                                       VerticalAlignment="Center"/>
-                            <Button Grid.Column="1" Content="Copy" Style="{StaticResource GhostButton}"
-                                    Command="{Binding CopyHashCommand}" Margin="8,0,0,0" Padding="8,2"
-                                    VerticalAlignment="Top" ToolTip="Copy this asset's hash to the clipboard"/>
-                        </Grid>
-                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
-                                   Text="{Binding SelectedAsset.Size, StringFormat='Decompressed: {0}'}"/>
-                        <TextBlock Style="{StaticResource Caption}"
-                                   Text="{Binding SelectedAsset.Packed, StringFormat='Compressed: {0}'}"/>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}"
-                                       VerticalAlignment="Center"
-                                       Text="{Binding SelectedAsset.Offset, StringFormat='Global offset: {0}'}"/>
-                            <Button Grid.Column="1" Content="Copy" Style="{StaticResource GhostButton}"
-                                    Command="{Binding CopyOffsetCommand}" Margin="8,0,0,0" Padding="8,2"
-                                    VerticalAlignment="Center" ToolTip="Copy this asset's global offset to the clipboard"/>
-                        </Grid>
-                        <TextBlock Margin="0,10,0,2" FontWeight="SemiBold" FontSize="12"
-                                   Foreground="{StaticResource TextSecondaryBrush}" Text="DETECTED"/>
-                        <TextBlock Text="{Binding DetectedType}" Foreground="{StaticResource SuccessBrush}"
-                                   TextWrapping="Wrap"/>
+                    <StackPanel Visibility="{Binding HasAsset, Converter={x:Static local:BoolToVis.Instance}}">
 
-                        <!-- CDN stub notice: shown when the selected asset is streamed, not installed. -->
-                        <Border Margin="0,10,0,0" CornerRadius="4" BorderThickness="1" Padding="10,8"
-                                Background="#22FBBF24" BorderBrush="#66FBBF24"
-                                Visibility="{Binding IsSelectedOffDisk, Converter={x:Static local:BoolToVis.Instance}}">
+                        <!-- Card: identity -->
+                        <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="⬦ CDN-only asset" FontWeight="SemiBold" FontSize="12"
-                                           Foreground="#FFFBBF24"/>
-                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" FontSize="12"
-                                           Foreground="{StaticResource TextSecondaryBrush}"
-                                           Text="This asset is streamed from the CDN on demand and is not installed on disk, so there is nothing to extract. It will download into the package only when the game needs it."/>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Texture preview -->
-                        <StackPanel Visibility="{Binding HasCandidates,
-                                    Converter={x:Static local:BoolToVis.Instance}}">
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" FontSize="12"
-                                       Foreground="{StaticResource TextSecondaryBrush}" Text="TEXTURE PREVIEW"/>
-                            <Border Background="{StaticResource BgSunkenBrush}" BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1" CornerRadius="4" Padding="6" Height="200">
                                 <Grid>
-                                    <Image Source="{Binding Preview}" Stretch="Uniform"
-                                           RenderOptions.BitmapScalingMode="Fant"
-                                           Visibility="{Binding HasPreview, Converter={x:Static local:BoolToVis.Instance}}"/>
-                                    <TextBlock Text="{Binding PreviewError}" Foreground="{StaticResource ErrorBrush}"
-                                               TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               TextAlignment="Center" FontSize="12"
-                                               Visibility="{Binding HasPreview, Converter={x:Static local:BoolToVis.Inverse}}"/>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding SelectedAsset.Hash}" FontFamily="{StaticResource MonoFont}"
+                                               Foreground="{StaticResource AccentBrush}" FontSize="14" TextWrapping="Wrap"
+                                               VerticalAlignment="Center"/>
+                                    <Button Grid.Column="1" Content="Copy" Style="{StaticResource GhostButton}"
+                                            Command="{Binding CopyHashCommand}" Margin="8,0,0,0" Padding="8,2"
+                                            VerticalAlignment="Top" ToolTip="Copy this asset's hash to the clipboard"/>
                                 </Grid>
-                            </Border>
-                            <TextBlock Text="Auto-detected size/format — override if needed:"
-                                       Style="{StaticResource Caption}" Margin="0,8,0,3"/>
-                            <ComboBox ItemsSource="{Binding Candidates}" SelectedItem="{Binding SelectedCandidate}"
-                                      Style="{StaticResource DarkCombo}"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                <Button Content="Save PNG…" Style="{StaticResource AccentButton}"
-                                        Command="{Binding ExportPngCommand}"/>
-                                <Button Content="Save DDS…" Style="{StaticResource GhostButton}"
-                                        Command="{Binding ExportDdsCommand}" Margin="8,0,0,0"
-                                        ToolTip="Export as a valid DDS (opens in Photoshop/GIMP/Paint.NET)"/>
-                                <Button Content="Copy image" Style="{StaticResource GhostButton}"
-                                        Command="{Binding CopyImageCommand}" Margin="8,0,0,0"
-                                        ToolTip="Copy the decoded image to the clipboard"/>
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
+                                           Text="{Binding SelectedAsset.Size, StringFormat='Decompressed: {0}'}"/>
+                                <TextBlock Style="{StaticResource Caption}"
+                                           Text="{Binding SelectedAsset.Packed, StringFormat='Compressed: {0}'}"/>
+                                <Grid Margin="0,2,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}"
+                                               VerticalAlignment="Center"
+                                               Text="{Binding SelectedAsset.Offset, StringFormat='Global offset: {0}'}"/>
+                                    <Button Grid.Column="1" Content="Copy" Style="{StaticResource GhostButton}"
+                                            Command="{Binding CopyOffsetCommand}" Margin="8,0,0,0" Padding="8,2"
+                                            VerticalAlignment="Center" ToolTip="Copy this asset's global offset to the clipboard"/>
+                                </Grid>
                             </StackPanel>
-
-                            <!-- Format-detection test tool: show ALL interpretations; double-click the correct one (logged) -->
-                            <CheckBox Content="Show all formats (test tool)" IsChecked="{Binding ShowAllFormats}"
-                                      Margin="0,12,0,0"/>
-                            <TextBlock Text="Double-click the correct render — it's logged to find dims→format patterns."
-                                       Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,4"
-                                       Visibility="{Binding ShowAllFormats, Converter={x:Static local:BoolToVis.Instance}}"/>
-                            <ItemsControl ItemsSource="{Binding CandidateThumbs}"
-                                          Visibility="{Binding ShowAllFormats, Converter={x:Static local:BoolToVis.Instance}}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Width="104" Margin="3" Background="{StaticResource BgSunkenBrush}"
-                                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4"
-                                                MouseLeftButtonDown="Candidate_DoubleClick" Cursor="Hand">
-                                            <StackPanel>
-                                                <Image Source="{Binding Image}" Height="88" Stretch="Uniform" Margin="4"
-                                                       RenderOptions.BitmapScalingMode="Fant"/>
-                                                <TextBlock Text="{Binding Label}" FontSize="10" HorizontalAlignment="Center"
-                                                           Foreground="{StaticResource TextPrimaryBrush}"/>
-                                                <TextBlock Text="{Binding ScoreText}" Style="{StaticResource Caption}"
-                                                           HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-
-                        <StackPanel Visibility="{Binding HasStrings, Converter={x:Static local:BoolToVis.Instance}}">
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" FontSize="12"
-                                       Foreground="{StaticResource TextSecondaryBrush}" Text="STRINGS (text asset)"/>
-                            <Border Background="{StaticResource BgSunkenBrush}" BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1" CornerRadius="4">
-                                <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="160">
-                                    <TextBlock Text="{Binding StringsPreview}" FontFamily="{StaticResource MonoFont}"
-                                               FontSize="11" Foreground="{StaticResource TextPrimaryBrush}"
-                                               Padding="8" TextWrapping="Wrap"/>
-                                </ScrollViewer>
-                            </Border>
-                        </StackPanel>
-
-                        <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" FontSize="12"
-                                   Foreground="{StaticResource TextSecondaryBrush}" Text="HEX"/>
-                        <Border Background="{StaticResource BgSunkenBrush}"
-                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="200">
-                                <TextBlock Text="{Binding HexPreview}" FontFamily="{StaticResource MonoFont}"
-                                           FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
-                                           Padding="8" TextWrapping="NoWrap"/>
-                            </ScrollViewer>
                         </Border>
-                        <Button Content="Export raw…" Style="{StaticResource AccentButton}"
-                                Command="{Binding ExportAssetCommand}" HorizontalAlignment="Left" Margin="0,14,0,0"/>
+
+                        <!-- Card: detected type + CDN notice -->
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="DETECTED" Style="{StaticResource CardHeader}"/>
+                                <TextBlock Text="{Binding DetectedType}" Foreground="{StaticResource SuccessBrush}"
+                                           TextWrapping="Wrap"/>
+                                <Border Margin="0,10,0,0" CornerRadius="4" BorderThickness="1" Padding="10,8"
+                                        Background="#22FBBF24" BorderBrush="#66FBBF24"
+                                        Visibility="{Binding IsSelectedOffDisk, Converter={x:Static local:BoolToVis.Instance}}">
+                                    <StackPanel>
+                                        <TextBlock Text="⬦ CDN-only asset" FontWeight="SemiBold" FontSize="12"
+                                                   Foreground="#FFFBBF24"/>
+                                        <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" FontSize="12"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   Text="This asset is streamed from the CDN on demand and is not installed on disk, so there is nothing to extract. It will download into the package only when the game needs it."/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Card: texture preview -->
+                        <Border Style="{StaticResource Card}"
+                                Visibility="{Binding HasCandidates, Converter={x:Static local:BoolToVis.Instance}}">
+                            <StackPanel>
+                                <TextBlock Text="TEXTURE PREVIEW" Style="{StaticResource CardHeader}"/>
+                                <Border Background="{StaticResource BgSunkenBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1" CornerRadius="4" Padding="6" Height="200">
+                                    <Grid>
+                                        <Image Source="{Binding Preview}" Stretch="Uniform"
+                                               RenderOptions.BitmapScalingMode="Fant"
+                                               Visibility="{Binding HasPreview, Converter={x:Static local:BoolToVis.Instance}}"/>
+                                        <TextBlock Text="{Binding PreviewError}" Foreground="{StaticResource ErrorBrush}"
+                                                   TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   TextAlignment="Center" FontSize="12"
+                                                   Visibility="{Binding HasPreview, Converter={x:Static local:BoolToVis.Inverse}}"/>
+                                    </Grid>
+                                </Border>
+                                <TextBlock Text="Auto-detected size/format — override if needed:"
+                                           Style="{StaticResource Caption}" Margin="0,8,0,3"/>
+                                <ComboBox ItemsSource="{Binding Candidates}" SelectedItem="{Binding SelectedCandidate}"
+                                          Style="{StaticResource DarkCombo}"/>
+                                <WrapPanel Margin="0,8,0,0">
+                                    <Button Content="Save PNG…" Style="{StaticResource AccentButton}"
+                                            Command="{Binding ExportPngCommand}" Margin="0,0,8,8"/>
+                                    <Button Content="Save DDS…" Style="{StaticResource GhostButton}"
+                                            Command="{Binding ExportDdsCommand}" Margin="0,0,8,8"
+                                            ToolTip="Export as a valid DDS (opens in Photoshop/GIMP/Paint.NET)"/>
+                                    <Button Content="Copy image" Style="{StaticResource GhostButton}"
+                                            Command="{Binding CopyImageCommand}" Margin="0,0,0,8"
+                                            ToolTip="Copy the decoded image to the clipboard"/>
+                                </WrapPanel>
+                                <CheckBox Content="Show all formats (test tool)" IsChecked="{Binding ShowAllFormats}"
+                                          Margin="0,12,0,0"/>
+                                <TextBlock Text="Double-click the correct render — it's logged to find dims→format patterns."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,4"
+                                           Visibility="{Binding ShowAllFormats, Converter={x:Static local:BoolToVis.Instance}}"/>
+                                <ItemsControl ItemsSource="{Binding CandidateThumbs}"
+                                              Visibility="{Binding ShowAllFormats, Converter={x:Static local:BoolToVis.Instance}}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="104" Margin="3" Background="{StaticResource BgSunkenBrush}"
+                                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4"
+                                                    MouseLeftButtonDown="Candidate_DoubleClick" Cursor="Hand">
+                                                <StackPanel>
+                                                    <Image Source="{Binding Image}" Height="88" Stretch="Uniform" Margin="4"
+                                                           RenderOptions.BitmapScalingMode="Fant"/>
+                                                    <TextBlock Text="{Binding Label}" FontSize="10" HorizontalAlignment="Center"
+                                                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                                                    <TextBlock Text="{Binding ScoreText}" Style="{StaticResource Caption}"
+                                                               HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Card: strings -->
+                        <Border Style="{StaticResource Card}"
+                                Visibility="{Binding HasStrings, Converter={x:Static local:BoolToVis.Instance}}">
+                            <StackPanel>
+                                <TextBlock Text="STRINGS (text asset)" Style="{StaticResource CardHeader}"/>
+                                <Border Background="{StaticResource BgSunkenBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1" CornerRadius="4">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="160">
+                                        <TextBlock Text="{Binding StringsPreview}" FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11" Foreground="{StaticResource TextPrimaryBrush}"
+                                                   Padding="8" TextWrapping="Wrap"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Card: hex + export -->
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="HEX" Style="{StaticResource CardHeader}"/>
+                                <Border Background="{StaticResource BgSunkenBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="200">
+                                        <TextBlock Text="{Binding HexPreview}" FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
+                                                   Padding="8" TextWrapping="NoWrap"/>
+                                    </ScrollViewer>
+                                </Border>
+                                <Button Content="Export raw…" Style="{StaticResource AccentButton}"
+                                        Command="{Binding ExportAssetCommand}" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                     <TextBlock Text="Select an asset to inspect and export." Style="{StaticResource Caption}"
                                Margin="12,4"
                                Visibility="{Binding HasAsset, Converter={x:Static local:BoolToVis.Inverse}}"/>
                 </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
 

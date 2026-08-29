@@ -70,20 +70,6 @@ public partial class MainWindow : Window
                     if (DataContext is MainViewModel vm) { vm.StepThumbSize(me.Delta > 0 ? 1 : -1); me.Handled = true; }
                 };
             }
-            // Returning to the Browse tab re-realizes the thumbnail grid (WPF TabControl unloads
-            // non-selected tab content, which can leave the virtualized grid blank until nudged).
-            if (AssetTabs is not null)
-                AssetTabs.SelectionChanged += (s, ev) =>
-                {
-                    if (!ReferenceEquals(ev.OriginalSource, AssetTabs)) return;   // ignore inner grids' events
-                    if (AssetTabs.SelectedIndex != 0 || GridView is null) return; // 0 = the Browse tab
-                    GridView.Dispatcher.BeginInvoke(() =>
-                    {
-                        GridView.InvalidateMeasure();
-                        GridView.UpdateLayout();
-                        FindScrollViewer(GridView)?.InvalidateScrollInfo();
-                    }, System.Windows.Threading.DispatcherPriority.Loaded);
-                };
         };
 
         // --grid activates grid mode once assets load (independent of screenshot).
@@ -226,6 +212,27 @@ public partial class MainWindow : Window
         if (DataContext is MainViewModel vm) vm.ToggleUpdatesFilter();
     }
 
+    private void ExportMenu_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || sender is not System.Windows.Controls.Button btn) return;
+        var menu = new System.Windows.Controls.ContextMenu { PlacementTarget = btn };
+        void Item(string header, System.Windows.Input.ICommand cmd)
+        {
+            var mi = new System.Windows.Controls.MenuItem { Header = header, Command = cmd };
+            menu.Items.Add(mi);
+        }
+        Item("Export images — this package…", vm.ExportImagesCommand);
+        Item("Export images — all packages…", vm.ExportImagesAllCommand);
+        menu.Items.Add(new System.Windows.Controls.Separator());
+        Item("Export raw — this package…", vm.ExportPackageCommand);
+        Item("Export raw — whole game…", vm.ExportGameCommand);
+        menu.Items.Add(new System.Windows.Controls.Separator());
+        Item("Export CSV — this package…", vm.ExportCsvCommand);
+        Item("Export CSV — all packages…", vm.ExportCsvAllCommand);
+        btn.ContextMenu = menu;
+        menu.IsOpen = true;
+    }
+
     private void RecentFolders_Click(object sender, System.Windows.RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || sender is not System.Windows.Controls.Button btn) return;
@@ -253,89 +260,23 @@ public partial class MainWindow : Window
         if (DataContext is not MainViewModel vm) return;
         if (!MainViewModel.TryParseAddress(GoToBox.Text, out var addr))
         { vm.Status = $"'{GoToBox.Text}' is not a valid address."; return; }
-        OpenAddressTab(vm, addr);
+        JumpToAddress(vm, addr);
     }
 
-    private void OpenAddressTab(MainViewModel vm, ulong addr)
+    // Navigate the MAIN view to the asset nearest a global offset — select it and scroll it into
+    // view in the table (offset order, all assets), instead of opening a separate tab.
+    private void JumpToAddress(MainViewModel vm, ulong addr)
     {
-        var rows = vm.AssetsByOffset();
-        if (rows.Count == 0) { vm.Status = "No package loaded."; return; }
         var target = vm.NearestByAddress(addr);
-
-        var grid = BuildAssetDataGrid(rows, target);
-        var tab = new System.Windows.Controls.TabItem
+        if (target is null) { vm.Status = vm.Packages.Count == 0 ? "No package loaded." : $"No asset near 0x{addr:x}."; return; }
+        vm.PrepareForJump();                 // table view, all assets, offset order → target is visible
+        vm.SelectedAsset = target;
+        MainTable.Dispatcher.BeginInvoke(new Action(() =>
         {
-            Content = grid,
-            Style = (System.Windows.Style)FindResource("DarkTabItem"),
-        };
-        // Header = "@0x…"  + a real close button that closes on a normal left-click.
-        var header = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-        header.Children.Add(new System.Windows.Controls.TextBlock { Text = $"@0x{addr:x}", VerticalAlignment = System.Windows.VerticalAlignment.Center });
-        var close = new System.Windows.Controls.Button
-        {
-            Content = "✕", Margin = new System.Windows.Thickness(8, 0, -4, 0), Padding = new System.Windows.Thickness(4, 0, 4, 0),
-            Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new System.Windows.Thickness(0),
-            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
-            Cursor = System.Windows.Input.Cursors.Hand, ToolTip = "Close this tab",
-        };
-        close.Click += (_, _) => AssetTabs.Items.Remove(tab);
-        header.Children.Add(close);
-        tab.Header = header;
-        // Middle-click also closes (common tab affordance).
-        tab.MouseDown += (_, me) => { if (me.ChangedButton == System.Windows.Input.MouseButton.Middle) AssetTabs.Items.Remove(tab); };
-        AssetTabs.Items.Add(tab);
-        AssetTabs.SelectedItem = tab;
-
-        // Scroll to the target row after layout.
-        if (target is not null)
-            grid.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                grid.SelectedItem = target;
-                grid.ScrollIntoView(target);
-                grid.UpdateLayout();
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
-        vm.Status = target is not null
-            ? $"Jumped to {target.Offset} (nearest to 0x{addr:x})."
-            : $"No asset near 0x{addr:x}.";
-    }
-
-    private System.Windows.Controls.DataGrid BuildAssetDataGrid(
-        System.Collections.Generic.IReadOnlyList<AssetRow> rows, AssetRow? _)
-    {
-        var g = new System.Windows.Controls.DataGrid
-        {
-            Style = (System.Windows.Style)FindResource("DarkDataGrid"),
-            ItemsSource = rows,
-        };
-        void Col(string header, string path, bool mono, string? width = null)
-        {
-            var c = new System.Windows.Controls.DataGridTextColumn
-            {
-                Header = header,
-                Binding = new System.Windows.Data.Binding(path),
-            };
-            if (mono)
-            {
-                var st = new System.Windows.Style(typeof(System.Windows.Controls.TextBlock));
-                st.Setters.Add(new System.Windows.Setter(System.Windows.Controls.TextBlock.FontFamilyProperty,
-                    (System.Windows.Media.FontFamily)FindResource("MonoFont")));
-                c.ElementStyle = st;
-            }
-            c.Width = width == "*" ? new System.Windows.Controls.DataGridLength(1, System.Windows.Controls.DataGridLengthUnitType.Star)
-                                   : System.Windows.Controls.DataGridLength.Auto;
-            g.Columns.Add(c);
-        }
-        Col("Name / hash", nameof(AssetRow.DisplayName), true, "*");
-        Col("Type", nameof(AssetRow.Kind), false);
-        Col("Dims", nameof(AssetRow.Dims), false);
-        Col("Size", nameof(AssetRow.Size), false);
-        Col("Offset", nameof(AssetRow.Offset), true);
-        g.ContextMenu = BuildRowContextMenu();
-        g.SelectionChanged += (s, _) =>
-        {
-            if (DataContext is MainViewModel vm && g.SelectedItem is AssetRow r) vm.SelectedAsset = r;
-        };
-        return g;
+            MainTable.UpdateLayout();
+            MainTable.ScrollIntoView(target);
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
+        vm.Status = $"Jumped to {target.Offset} (nearest to 0x{addr:x}).";
     }
 
     private System.Windows.Controls.ContextMenu BuildRowContextMenu()
@@ -384,17 +325,14 @@ public partial class MainWindow : Window
             exportSel.IsEnabled = n > 1;
         };
         Sep();
-        Item("Jump to this address (new tab)", r =>
+        Item("Jump to this address", r =>
         {
-            if (DataContext is MainViewModel vm) OpenAddressTab(vm, r.Entry.Offset);
+            if (DataContext is MainViewModel vm) JumpToAddress(vm, r.Entry.Offset);
         });
-        Item("Find images near this address (±1MB)", r =>
+        Item("Go to ~1MB before this address", r =>
         {
             if (DataContext is MainViewModel vm)
-            {
-                ulong lo = r.Entry.Offset > 0x100000 ? r.Entry.Offset - 0x100000 : 0;
-                OpenAddressTab(vm, lo);
-            }
+                JumpToAddress(vm, r.Entry.Offset > 0x100000 ? r.Entry.Offset - 0x100000 : 0);
         });
         return m;
     }
