@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.6-beta — Quality-of-life polish
+
+### Sidebar
+- Per-package **Assets** and CDN-stub counts, with a category-colored dot and a rich hover tooltip.
+- CDN-only assets are shown amber; selecting a CDN stub explains it is streamed, not installed.
+- Package **quick-filter** box (matches name or category).
+
+### Browsing
+- Sort assets by **Images first** or **CDN stubs first**; sort the sidebar by asset/CDN counts.
+- Right-click actions in both the table and the grid: copy hash/offset, jump-to-address,
+  **export raw asset**, and **export multiple selected assets** at once.
+- Keyboard: **Esc** resets search/filters; **Ctrl+C** copies the selected asset's hash.
+
+### Import / export
+- **Drag and drop** a game folder (or a file within it) onto the window to import it.
+- Folder import now runs **off the UI thread**, so opening/dropping a folder never freezes.
+
+### Inspector
+- **Copy** buttons for the asset hash and global offset; empty-state guidance when nothing is selected.
+
+### Session
+- Remembers and restores grid/table mode, thumbnail size, last-opened package, and window geometry.
+
 ## 0.9.5-beta — Update tracking in the UI + readable menus
 
 Change tracking is now **in the app**, not just the headless CLI:
