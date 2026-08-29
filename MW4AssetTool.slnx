@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FFTool.App/FFTool.App.csproj" />
+    <Project Path="src/FFTool.Formats/FFTool.Formats.csproj" />
+    <Project Path="src/FFTool.Native/FFTool.Native.csproj" />
+  </Folder>
+</Solution>

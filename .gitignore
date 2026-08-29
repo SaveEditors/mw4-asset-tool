@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+[Bb]uild/
+dist/
+*.user
+
+# App caches / user data / exports
+*.zone.bin
+*_catalog.csv
+format_choices.csv
+cache/
+
+# OS / editor
+.vs/
+.idea/
+*.suo
+Thumbs.db
+.DS_Store
