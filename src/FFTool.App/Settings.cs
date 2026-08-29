@@ -17,6 +17,7 @@ public sealed class Settings
     public string? LastPackage { get; set; }
     public string? ThumbSizeName { get; set; }
     public bool GridMode { get; set; }
+    public List<string> RecentFolders { get; set; } = [];
 
     private static string Dir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MW4FFTool");
