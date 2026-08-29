@@ -70,6 +70,20 @@ public partial class MainWindow : Window
                     if (DataContext is MainViewModel vm) { vm.StepThumbSize(me.Delta > 0 ? 1 : -1); me.Handled = true; }
                 };
             }
+            // Returning to the Browse tab re-realizes the thumbnail grid (WPF TabControl unloads
+            // non-selected tab content, which can leave the virtualized grid blank until nudged).
+            if (AssetTabs is not null)
+                AssetTabs.SelectionChanged += (s, ev) =>
+                {
+                    if (!ReferenceEquals(ev.OriginalSource, AssetTabs)) return;   // ignore inner grids' events
+                    if (AssetTabs.SelectedIndex != 0 || GridView is null) return; // 0 = the Browse tab
+                    GridView.Dispatcher.BeginInvoke(() =>
+                    {
+                        GridView.InvalidateMeasure();
+                        GridView.UpdateLayout();
+                        FindScrollViewer(GridView)?.InvalidateScrollInfo();
+                    }, System.Windows.Threading.DispatcherPriority.Loaded);
+                };
         };
 
         // --grid activates grid mode once assets load (independent of screenshot).
@@ -251,12 +265,24 @@ public partial class MainWindow : Window
         var grid = BuildAssetDataGrid(rows, target);
         var tab = new System.Windows.Controls.TabItem
         {
-            Header = $"@0x{addr:x}  ✕",
             Content = grid,
             Style = (System.Windows.Style)FindResource("DarkTabItem"),
         };
-        // Close on clicking the ✕ in the header (simple: middle/right or double-click header).
-        tab.MouseRightButtonUp += (_, _) => { AssetTabs.Items.Remove(tab); };
+        // Header = "@0x…"  + a real close button that closes on a normal left-click.
+        var header = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        header.Children.Add(new System.Windows.Controls.TextBlock { Text = $"@0x{addr:x}", VerticalAlignment = System.Windows.VerticalAlignment.Center });
+        var close = new System.Windows.Controls.Button
+        {
+            Content = "✕", Margin = new System.Windows.Thickness(8, 0, -4, 0), Padding = new System.Windows.Thickness(4, 0, 4, 0),
+            Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new System.Windows.Thickness(0),
+            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+            Cursor = System.Windows.Input.Cursors.Hand, ToolTip = "Close this tab",
+        };
+        close.Click += (_, _) => AssetTabs.Items.Remove(tab);
+        header.Children.Add(close);
+        tab.Header = header;
+        // Middle-click also closes (common tab affordance).
+        tab.MouseDown += (_, me) => { if (me.ChangedButton == System.Windows.Input.MouseButton.Middle) AssetTabs.Items.Remove(tab); };
         AssetTabs.Items.Add(tab);
         AssetTabs.SelectedItem = tab;
 
@@ -269,7 +295,7 @@ public partial class MainWindow : Window
                 grid.UpdateLayout();
             }), System.Windows.Threading.DispatcherPriority.Loaded);
         vm.Status = target is not null
-            ? $"Jumped to {target.Offset} (nearest to 0x{addr:x}). Right-click a tab to close it."
+            ? $"Jumped to {target.Offset} (nearest to 0x{addr:x})."
             : $"No asset near 0x{addr:x}.";
     }
 
