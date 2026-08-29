@@ -56,6 +56,23 @@
         <Setter Property="Margin" Value="12,10,12,6"/>
     </Style>
 
+    <!-- Inspector "card": a rounded, raised panel that groups related detail. -->
+    <Style x:Key="Card" TargetType="{x:Type Border}">
+        <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Padding" Value="12"/>
+        <Setter Property="Margin" Value="12,0,12,10"/>
+    </Style>
+    <Style x:Key="CardHeader" TargetType="{x:Type TextBlock}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
+        <Setter Property="FontSize" Value="10.5"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+        <Setter Property="Margin" Value="0,0,0,8"/>
+    </Style>
+
     <Style x:Key="AccentButton" TargetType="{x:Type Button}">
         <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
         <Setter Property="FontSize" Value="13"/>
