@@ -11,19 +11,67 @@ using Microsoft.Win32;
 
 namespace FFTool.App;
 
-public sealed class PackageRow(PackageSet set, long totalBytes)
+public sealed class PackageRow : ViewModelBase
 {
-    public string Name { get; } = set.XpakPath is { } p ? KapiReader.StemOf(p)
-                                  : (set.XsubPaths.Count > 0 ? KapiReader.StemOf(set.XsubPaths[0]) : "?");
-    public bool HasIndex { get; } = set.XpakPath is not null;
-    public int XsubCount { get; } = set.XsubPaths.Count;
-    public string Size { get; } = Format.Bytes(totalBytes);
-    public string Guid { get; } = $"0x{set.Guid:x16}";
-    public PackageSet Set { get; } = set;
+    private readonly PackageSet _set;
+
+    public PackageRow(PackageSet set, long totalBytes)
+    {
+        _set = set;
+        Name = set.XpakPath is { } p ? KapiReader.StemOf(p)
+               : (set.XsubPaths.Count > 0 ? KapiReader.StemOf(set.XsubPaths[0]) : "?");
+        HasIndex = set.XpakPath is not null;
+        XsubCount = set.XsubPaths.Count;
+        Size = Format.Bytes(totalBytes);
+        Guid = $"0x{set.Guid:x16}";
+    }
+
+    public string Name { get; }
+    public bool HasIndex { get; }
+    public int XsubCount { get; }
+    public string Size { get; }
+    public string Guid { get; }
+    public PackageSet Set => _set;
+
+    // ── Asset counts (filled in by a background scan after import) ───────────────
+    private int _assetCount = -1, _offDiskCount = -1, _imageCount = -1;
+    public bool CountsKnown => _assetCount >= 0;
+
+    public void SetCounts(int total, int offDisk, int images)
+    {
+        _assetCount = total; _offDiskCount = offDisk; _imageCount = images;
+        Raise(nameof(CountsKnown)); Raise(nameof(AssetsText)); Raise(nameof(CdnText));
+        Raise(nameof(HasCdn)); Raise(nameof(CountsTip));
+        Raise(nameof(AssetCountValue)); Raise(nameof(OffDiskValue));
+    }
+
+    // Numeric values so the sidebar columns sort by magnitude, not lexically. Still-unknown
+    // counts are -1, which sorts them to the top on an ascending sort (they fill in within a
+    // second or two as the background scan completes).
+    public int AssetCountValue => _assetCount;
+    public int OffDiskValue => _offDiskCount;
+
+    /// <summary>Total on-disk-installable + CDN asset count, e.g. "45,016".</summary>
+    public string AssetsText => _assetCount < 0 ? "…" : _assetCount.ToString("N0");
+
+    /// <summary>CDN-stub (off-disk) count for the sidebar column; blank when zero/unknown.</summary>
+    public string CdnText => _offDiskCount <= 0 ? "" : _offDiskCount.ToString("N0");
+    public bool HasCdn => _offDiskCount > 0;
+
+    /// <summary>Rich hover summary: counts + disk size + content category.</summary>
+    public string CountsTip => _assetCount < 0
+        ? $"{Content}\n{Size} on disk · counting assets…"
+        : $"{Content}\n{_assetCount:N0} assets · {_imageCount:N0} images · " +
+          $"{_assetCount - _offDiskCount:N0} installed · {_offDiskCount:N0} CDN-only\n{Size} on disk";
 
     /// <summary>Human content category derived from the package name (the game groups content this way).</summary>
-    public string Content => Categorize(set.XpakPath is { } p ? KapiReader.StemOf(p)
-                                       : (set.XsubPaths.Count > 0 ? KapiReader.StemOf(set.XsubPaths[0]) : "?"));
+    public string Content => Categorize(Stem);
+
+    private string Stem => _set.XpakPath is { } p ? KapiReader.StemOf(p)
+                           : (_set.XsubPaths.Count > 0 ? KapiReader.StemOf(_set.XsubPaths[0]) : "?");
+
+    /// <summary>A muted accent brush per category, for the sidebar's category dot.</summary>
+    public Brush CategoryBrush => CategoryBrushOf(Stem);
 
     private static string Categorize(string stem)
     {
@@ -36,6 +84,32 @@ public sealed class PackageRow(PackageSet set, long totalBytes)
         if (s.Contains("codhq")) return "Core / frontend UI";
         if (s.Contains("boot")) return "Boot";
         return "Other";
+    }
+
+    private static readonly Dictionary<string, Brush> _categoryBrushes = new();
+    private static readonly object _brushGate = new();
+    private static Brush CategoryBrushOf(string stem)
+    {
+        string s = stem.ToLowerInvariant();
+        string hex =
+              s.StartsWith("eng_") || s.StartsWith("ens_") || s.StartsWith("ww_") ? "#FF6B7280" // Localization — grey
+            : s.Contains("mtx") ? "#FFC084FC"   // Store — violet
+            : s.Contains("wz")  ? "#FF34D399"   // Warzone — green
+            : s.Contains("mp")  ? "#FF5B9DFF"   // Multiplayer — blue
+            : s.Contains("sp") || s.Contains("rex") ? "#FFFB923C" // Campaign — orange
+            : s.Contains("codhq") ? "#FF22D3EE" // Core — cyan
+            : s.Contains("boot") ? "#FFFBBF24"  // Boot — amber
+            : "#FF9AA7B4";                       // Other — muted
+        lock (_brushGate)
+        {
+            if (!_categoryBrushes.TryGetValue(hex, out var brush))
+            {
+                brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)!);
+                brush.Freeze();
+                _categoryBrushes[hex] = brush;
+            }
+            return brush;
+        }
     }
 }
 
@@ -160,7 +234,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private bool _showContent;
     /// <summary>Left panel toggle: false = Packages (xpak), true = Content (maps/fastfiles).</summary>
-    public bool ShowContent { get => _showContent; set { if (Set(ref _showContent, value)) Raise(nameof(ShowPackages)); } }
+    public bool ShowContent { get => _showContent; set { if (Set(ref _showContent, value)) { Raise(nameof(ShowPackages)); Raise(nameof(NoAssetsLoaded)); } } }
     public bool ShowPackages => !_showContent;
 
     private ContentGroupRow? _selectedContent;
@@ -193,12 +267,13 @@ public sealed class MainViewModel : ViewModelBase
     private string _fastfileInfo = "";
     public string FastfileInfo { get => _fastfileInfo; set => Set(ref _fastfileInfo, value); }
     private bool _hasFastfileInfo;
-    public bool HasFastfileInfo { get => _hasFastfileInfo; set => Set(ref _hasFastfileInfo, value); }
+    public bool HasFastfileInfo { get => _hasFastfileInfo; set { if (Set(ref _hasFastfileInfo, value)) Raise(nameof(NothingSelected)); } }
 
     private void ShowFastfileHeader(ContentEntry? e)
     {
         FastfileInfo = ""; HasFastfileInfo = false; ZonePreview = ""; HasZone = false;
         if (e is null || _gameDir is null) return;
+        SelectedAsset = null;   // the inspector shows one thing at a time (asset OR fastfile)
         var path = Path.Combine(_gameDir, e.FileName);
         var info = FastfileHeader.TryRead(path);
         if (info is null) return;
@@ -265,7 +340,16 @@ public sealed class MainViewModel : ViewModelBase
     private readonly CollectionViewSource _assetsSource = new();
     public ICollectionView AssetsView => _assetsSource.View;
 
+    private readonly CollectionViewSource _packagesSource = new();
+    public ICollectionView PackagesView => _packagesSource.View;
+
+    private string _packageFilter = "";
+    /// <summary>Live filter over the sidebar package list (matches name or content category).</summary>
+    public string PackageFilter { get => _packageFilter; set { if (Set(ref _packageFilter, value)) PackagesView?.Refresh(); } }
+
     private readonly Settings _settings = Settings.Load();
+    /// <summary>The single settings instance — the window shares it for geometry so there is one source of truth.</summary>
+    public Settings Settings => _settings;
 
     public MainViewModel()
     {
@@ -273,6 +357,15 @@ public sealed class MainViewModel : ViewModelBase
         // not View.Filter (which is lost when Source is reassigned).
         _assetsSource.Filter += (_, e) => e.Accepted = Match((AssetRow)e.Item);
         _assetsSource.Source = _allAssets;
+
+        _packagesSource.Source = Packages;
+        _packagesSource.Filter += (_, e) =>
+        {
+            if (_packageFilter.Length == 0) { e.Accepted = true; return; }
+            var p = (PackageRow)e.Item;
+            e.Accepted = p.Name.Contains(_packageFilter, StringComparison.OrdinalIgnoreCase)
+                      || p.Content.Contains(_packageFilter, StringComparison.OrdinalIgnoreCase);
+        };
         ImportCommand = new RelayCommand(Import);
         ExportGameCommand = new RelayCommand(() => _ = ExportWholeGameAsync(), () => Packages.Count > 0 && !IsBusy);
         ExportAssetCommand = new RelayCommand(() => _ = ExportSelectedAsync(), () => SelectedAsset is not null);
@@ -290,6 +383,35 @@ public sealed class MainViewModel : ViewModelBase
         ExportCsvAllCommand = new RelayCommand(() => _ = ExportCsvAllAsync(), () => Packages.Count > 0 && !IsBusy);
         ExportImagesCommand = new RelayCommand(() => _ = ExportImagesAsync(false), () => _openPackage is not null && _oodleReady && !IsBusy);
         ExportImagesAllCommand = new RelayCommand(() => _ = ExportImagesAsync(true), () => Packages.Count > 0 && _oodleReady && !IsBusy);
+        CopyHashCommand = new RelayCommand(() => CopyToClipboard(SelectedAsset?.Hash, "hash"), () => SelectedAsset is not null);
+        CopyOffsetCommand = new RelayCommand(() => CopyToClipboard(SelectedAsset?.Offset, "offset"), () => SelectedAsset is not null);
+    }
+
+    public ICommand CopyHashCommand { get; }
+    public ICommand CopyOffsetCommand { get; }
+
+    /// <summary>
+    /// Copy a value to the clipboard and confirm in the status bar. The Windows clipboard is
+    /// frequently held for a few milliseconds by Explorer / RDP / clipboard managers, so retry
+    /// a couple of times before reporting failure to avoid spurious "Copy failed" messages.
+    /// </summary>
+    private void CopyToClipboard(string? value, string label)
+    {
+        if (string.IsNullOrEmpty(value)) return;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetDataObject(value, copy: true);   // OLE-backed, retries internally
+                Status = $"Copied {label}: {value}";
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (attempt == 2) { Status = $"Copy failed: {ex.Message}"; return; }
+                System.Threading.Thread.Sleep(30);
+            }
+        }
     }
 
     public ICommand LoadNamesCommand { get; }
@@ -571,17 +693,37 @@ public sealed class MainViewModel : ViewModelBase
         Status = "Text filter cleared.";
     }
 
+    /// <summary>Esc: clear search + filters back to the default view (all assets).</summary>
+    public ICommand ResetViewCommand => _resetViewCommand ??= new RelayCommand(() =>
+    {
+        bool changed = false;
+        if (_assetSearch.Length > 0) { _assetSearch = ""; Raise(nameof(AssetSearch)); changed = true; }
+        if (_textMatches is not null) { _textMatches = null; changed = true; }
+        if (_categoryFilter != "All assets") { _categoryFilter = "All assets"; Raise(nameof(CategoryFilter)); Raise(nameof(ShowingUpdatesOnly)); changed = true; }
+        if (changed) { AssetsView?.Refresh(); Status = "View reset."; }
+    });
+    private ICommand? _resetViewCommand;
+
     public ICommand ImportCommand { get; }
     public ICommand ExportAssetCommand { get; }
     public ICommand ExportPackageCommand { get; }
     public ICommand ExportPngCommand { get; }
     public ICommand ExportGameCommand { get; }
 
-    /// <summary>Auto-load the last used game directory on startup, if still present.</summary>
-    public void RestoreLastSession()
+    /// <summary>Auto-load the last used game directory + view state on startup, if still present.</summary>
+    public async Task RestoreLastSession()
     {
-        if (_settings.LastGameDir is { Length: > 0 } d && Directory.Exists(d))
-            ImportDirectory(d);
+        if (_settings.LastGameDir is not { Length: > 0 } d || !Directory.Exists(d)) return;
+        await ImportDirectoryAsync(d);   // wait for packages before selecting one below
+        if (_settings.ThumbSizeName is { Length: > 0 } ts && ThumbSizes.Contains(ts)) ThumbSizeName = ts;
+        // Only re-open the last package if it still EXISTS — otherwise SelectPackageByName's
+        // fallback to the first package would overwrite the remembered choice via the setter.
+        if (_settings.LastPackage is { Length: > 0 } lp
+            && Packages.Any(p => string.Equals(p.Name, lp, StringComparison.OrdinalIgnoreCase)))
+            SelectPackageByName(lp);
+        // GridMode's setter runs StartPrefetch immediately; assets aren't loaded yet, so it's a
+        // no-op here — LoadPackageAsync starts the prefetch once its rows exist.
+        if (_settings.GridMode) GridMode = true;
     }
 
     private async Task ExportWholeGameAsync()
@@ -689,6 +831,7 @@ public sealed class MainViewModel : ViewModelBase
             Raise(nameof(TableMode));
             AssetsView?.Refresh();
             if (value) StartPrefetch(); else _thumbs?.StopPrefetch();
+            _settings.GridMode = value; _settings.Save();
         }
     }
     public bool TableMode => !_gridMode;
@@ -714,7 +857,7 @@ public sealed class MainViewModel : ViewModelBase
     public string ThumbSizeName
     {
         get => _thumbSizeName;
-        set { if (Set(ref _thumbSizeName, value)) { Raise(nameof(ThumbSize)); Raise(nameof(ThumbCellSize)); } }
+        set { if (Set(ref _thumbSizeName, value)) { Raise(nameof(ThumbSize)); Raise(nameof(ThumbCellSize)); _settings.ThumbSizeName = value; _settings.Save(); } }
     }
     public double ThumbSize => _thumbSizeName switch
     {
@@ -774,7 +917,7 @@ public sealed class MainViewModel : ViewModelBase
     }
 
     public IReadOnlyList<string> SortOptions { get; } =
-        ["Offset (file order)", "Size ↓", "Size ↑", "Type", "Hash"];
+        ["Offset (file order)", "Size ↓", "Size ↑", "Type", "Hash", "Images first", "CDN stubs first"];
 
     private string _sortBy = "Offset (file order)";
     public string SortBy { get => _sortBy; set { if (Set(ref _sortBy, value)) ApplySort(); } }
@@ -790,6 +933,20 @@ public sealed class MainViewModel : ViewModelBase
                 "Size ↑" => Comparer<object>.Create((a, b) => ((AssetRow)a).Decompressed.CompareTo(((AssetRow)b).Decompressed)),
                 "Type"   => Comparer<object>.Create((a, b) => string.CompareOrdinal(((AssetRow)a).Kind, ((AssetRow)b).Kind)),
                 "Hash"   => Comparer<object>.Create((a, b) => ((AssetRow)a).Entry.Key.CompareTo(((AssetRow)b).Entry.Key)),
+                // Image-shaped assets to the top, largest first within that group.
+                "Images first" => Comparer<object>.Create((a, b) =>
+                {
+                    var (x, y) = ((AssetRow)a, (AssetRow)b);
+                    int c = y.IsImageShaped.CompareTo(x.IsImageShaped);
+                    return c != 0 ? c : y.Decompressed.CompareTo(x.Decompressed);
+                }),
+                // CDN-only stubs to the top (surface what a package streams vs installs).
+                "CDN stubs first" => Comparer<object>.Create((a, b) =>
+                {
+                    var (x, y) = ((AssetRow)a, (AssetRow)b);
+                    int c = y.IsOffDisk.CompareTo(x.IsOffDisk);
+                    return c != 0 ? c : x.Entry.Offset.CompareTo(y.Entry.Offset);
+                }),
                 _ => null, // offset / natural file order
             };
         }
@@ -850,16 +1007,34 @@ public sealed class MainViewModel : ViewModelBase
     public PackageRow? SelectedPackage
     {
         get => _selectedPackage;
-        set { if (Set(ref _selectedPackage, value)) _ = LoadPackageAsync(value); }
+        set
+        {
+            if (!Set(ref _selectedPackage, value)) return;
+            if (value is not null) { _settings.LastPackage = value.Name; _settings.Save(); }
+            _ = LoadPackageAsync(value);
+        }
     }
 
     private AssetRow? _selectedAsset;
     public AssetRow? SelectedAsset
     {
         get => _selectedAsset;
-        set { if (Set(ref _selectedAsset, value)) { Raise(nameof(HasAsset)); _ = PreviewAsync(value); } }
+        set
+        {
+            if (!Set(ref _selectedAsset, value)) return;
+            // Selecting an asset supersedes any fastfile shown in the inspector (one at a time).
+            if (value is not null && _hasFastfileInfo)
+            { _selectedContentFile = null; Raise(nameof(SelectedContentFile)); FastfileInfo = ""; HasFastfileInfo = false; }
+            Raise(nameof(HasAsset)); Raise(nameof(NothingSelected)); _ = PreviewAsync(value);
+        }
     }
     public bool HasAsset => _selectedAsset is not null;
+
+    /// <summary>Nothing (asset or fastfile) is selected → show inspector guidance.</summary>
+    public bool NothingSelected => _selectedAsset is null && !_hasFastfileInfo;
+
+    /// <summary>No package's assets are loaded → show center-panel empty-state guidance.</summary>
+    public bool NoAssetsLoaded => _allAssets.Count == 0 && !_showContent;
 
     private string _detectedType = "";
     public string DetectedType { get => _detectedType; set => Set(ref _detectedType, value); }
@@ -963,15 +1138,30 @@ public sealed class MainViewModel : ViewModelBase
         set { if (Set(ref _selectedCandidate, value)) RenderPreview(); }
     }
 
+    private bool _isSelectedOffDisk;
+    /// <summary>The selected asset is a CDN stub (offset beyond installed data) — not extractable.</summary>
+    public bool IsSelectedOffDisk { get => _isSelectedOffDisk; set => Set(ref _isSelectedOffDisk, value); }
+
     private async Task PreviewAsync(AssetRow? row)
     {
         DetectedType = ""; HexPreview = ""; Preview = null; PreviewError = "";
         Candidates.Clear(); Raise(nameof(HasCandidates));
         _selectedCandidate = null; _selectedBytes = null;
+        IsSelectedOffDisk = false;
         if (row is null || _openPackage is null) return;
         if (!_oodleReady) { DetectedType = "oo2core not loaded"; return; }
 
         var pkg = _openPackage; var entry = row.Entry;
+
+        // CDN stub: the offset points past the installed .xsub data — the asset is streamed
+        // on demand and is not on disk, so there is nothing to extract. Say so up front.
+        if (!pkg.IsOnDisk(entry))
+        {
+            IsSelectedOffDisk = true;
+            DetectedType = "CDN stub — streamed, not installed locally";
+            return;
+        }
+
         try
         {
             var bytes = await Task.Run(() => pkg.Extract(entry));
@@ -1103,53 +1293,67 @@ public sealed class MainViewModel : ViewModelBase
         ImportDirectory(dlg.FolderName);
     }
 
-    /// <summary>Index a directory (used by the Import button and the --import CLI arg).</summary>
-    public void ImportDirectory(string dir)
+    /// <summary>Index a directory (fire-and-forget wrapper for the Import button, drag-drop, CLI).</summary>
+    public void ImportDirectory(string dir) => _ = ImportDirectoryAsync(dir);
+
+    /// <summary>
+    /// Index a directory. The heavy discovery (opening ~40 package headers, sizing files, scanning
+    /// fastfiles) runs OFF the UI thread so dropping/opening a folder never freezes the window; the
+    /// collection mutations are marshalled back. Guarded against re-entrancy via <see cref="IsBusy"/>.
+    /// </summary>
+    public async Task ImportDirectoryAsync(string dir)
     {
         if (!Directory.Exists(dir)) { Status = $"Folder not found: {dir}"; return; }
-
+        if (IsBusy) { Status = "Busy — finish the current operation first."; return; }
+        Status = "Importing…"; IsBusy = true;
         try
         {
             _gameDir = dir;
             _settings.LastGameDir = dir; _settings.Save();
             _oodleReady = TryLoadOodle(dir);
-            var sets = KapiReader.DiscoverPackages(dir);
 
-            Packages.Clear();
-            long grand = 0; int xsubTotal = 0;
-            foreach (var s in sets.OrderByDescending(TotalBytes))
+            var built = await Task.Run(() =>
             {
-                long bytes = TotalBytes(s);
-                grand += bytes; xsubTotal += s.XsubPaths.Count;
-                Packages.Add(new PackageRow(s, bytes));
-            }
-
-            // Build the content/map catalog from readable fastfile names.
-            Content.Clear(); ContentFiles.Clear();
-            try
-            {
-                var entries = FastfileCatalog.Scan(dir);
-                _allContent = entries.ToList();
-                var groups = entries
+                var sets = KapiReader.DiscoverPackages(dir);
+                long grand = 0; int xsubTotal = 0;
+                var rows = new List<PackageRow>(sets.Count);
+                foreach (var s in sets.OrderByDescending(TotalBytes))
+                {
+                    long bytes = TotalBytes(s);
+                    grand += bytes; xsubTotal += s.XsubPaths.Count;
+                    rows.Add(new PackageRow(s, bytes));
+                }
+                List<ContentEntry> content;
+                try { content = FastfileCatalog.Scan(dir).ToList(); }
+                catch { content = []; }   // catalog is best-effort
+                var groups = content
                     .GroupBy(e => (e.Content, e.Category))
                     .Select(g => new ContentGroupRow(g.Key.Content, g.Key.Category, g.Count(),
                         g.Sum(x => x.Size), g.Select(x => x.Detail).FirstOrDefault(d => d.Length > 0) ?? ""))
-                    .OrderByDescending(g => g.Files);
-                foreach (var g in groups) Content.Add(g);
-            }
-            catch { /* catalog is best-effort */ }
+                    .OrderByDescending(g => g.Files).ToList();
+                return (rows, content, groups, sets.Count, grand, xsubTotal);
+            });
 
-            Summary = $"{sets.Count} package sets · {xsubTotal} xsub · {Format.Bytes(grand)} · " +
+            Packages.Clear();
+            _allAssets = []; _assetsSource.Source = _allAssets; Raise(nameof(NoAssetsLoaded)); // reset center panel
+            foreach (var r in built.rows) Packages.Add(r);
+
+            Content.Clear(); ContentFiles.Clear();
+            _allContent = built.content;
+            foreach (var g in built.groups) Content.Add(g);
+
+            Summary = $"{built.Item4} package sets · {built.xsubTotal} xsub · {Format.Bytes(built.grand)} · " +
                       (_oodleReady ? "oo2core ✓" : "oo2core ✗ (extraction disabled)");
-            Status = $"Indexed {sets.Count} packages · {Content.Count} content groups. Select a package to list assets.";
+            Status = $"Indexed {built.Item4} packages · {Content.Count} content groups. Select a package to list assets.";
 
-            // Load any tracked changes from the last update so New/Changed filters + badges work
-            // immediately (from the previous session's snapshot), then run the silent check that
-            // detects a fresh update, snapshots, diffs, and archives with no user action.
+            // Tracked changes from the last update (filters/badges), then the silent update check.
             LoadUpdateChanges();
             CheckForGameUpdate(dir);
+            // Background-count each package's assets + CDN stubs for the sidebar.
+            ScanPackageCounts([.. Packages]);
         }
         catch (Exception ex) { Status = $"Import failed: {ex.Message}"; }
+        finally { IsBusy = false; }
     }
 
     /// <summary>
@@ -1204,6 +1408,41 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
+    private volatile int _countScanGeneration;
+
+    /// <summary>
+    /// Background-scan each package's .xpak index to count total assets and CDN-only stubs
+    /// (offset beyond the installed data), updating each PackageRow on the UI thread as it
+    /// completes. Cheap: reads only the small index files, no decompression.
+    /// </summary>
+    private void ScanPackageCounts(IReadOnlyList<PackageRow> rows)
+    {
+        int gen = ++_countScanGeneration;
+        var ui = System.Windows.Application.Current.Dispatcher;
+        _ = Task.Run(() =>
+        {
+            foreach (var row in rows)
+            {
+                if (gen != _countScanGeneration) return;   // superseded by a new import
+                if (!row.HasIndex) continue;
+                int total = 0, offDisk = 0, images = 0;
+                try
+                {
+                    using var pkg = KapiPackage.Open(row.Set);
+                    total = pkg.Entries.Count;
+                    foreach (var e in pkg.Entries)
+                    {
+                        if (!pkg.IsOnDisk(e)) offDisk++;
+                        else if (ThumbnailProvider.IsImageShaped(e.DecompressedSize)) images++;
+                    }
+                }
+                catch { continue; }   // locked/new-format package → leave counts unknown
+                if (gen != _countScanGeneration) return;
+                ui.BeginInvoke(() => row.SetCounts(total, offDisk, images));
+            }
+        });
+    }
+
     /// <summary>Select a package by name stem (used by the --select CLI arg / auto-open).</summary>
     public void SelectPackageByName(string name)
     {
@@ -1212,7 +1451,7 @@ public sealed class MainViewModel : ViewModelBase
         if (row is not null) SelectedPackage = row;
     }
 
-    private int _loadGeneration;
+    private volatile int _loadGeneration;
 
     private async Task LoadPackageAsync(PackageRow? row)
     {
@@ -1220,9 +1459,10 @@ public sealed class MainViewModel : ViewModelBase
         _allAssets = [];
         _assetsSource.Source = _allAssets;
         SelectedAsset = null;
+        SelectedContentFile = null;   // clear any fastfile shown in the inspector on package switch
         _openPackage?.Dispose(); _openPackage = null;
         AssetRow.SetProvider(null);
-        if (row is null || !row.HasIndex) { Status = "Package has no index."; return; }
+        if (row is null || !row.HasIndex) { Status = "Package has no index."; Raise(nameof(NoAssetsLoaded)); return; }
 
         try
         {
@@ -1253,14 +1493,21 @@ public sealed class MainViewModel : ViewModelBase
             ApplyNames();
             ApplySort();
             Raise(nameof(AssetsView));
+            Raise(nameof(NoAssetsLoaded));
 
-            Summary = $"{row.Name}: {pkg.Entries.Count:N0} assets · {pkg.InRangeCount:N0} extractable";
+            // Fill this package's sidebar counts instantly from the classification we just did,
+            // instead of waiting for the background scan to reach it.
+            int offDisk = rows.Count(r => r.IsOffDisk);
+            int images = rows.Count(r => r.Category == "Image");
+            row.SetCounts(rows.Count, offDisk, images);
+
+            Summary = $"{row.Name}: {pkg.Entries.Count:N0} assets · {pkg.Entries.Count - offDisk:N0} extractable";
             Status = $"Loaded {pkg.Entries.Count:N0} assets from {row.Name}.";
 
             // If the grid is already active, begin preloading now that assets exist.
             if (_gridMode) StartPrefetch();
         }
-        catch (Exception ex) { Status = $"Load failed: {ex.Message}"; }
+        catch (Exception ex) { Status = $"Load failed: {ex.Message}"; Raise(nameof(NoAssetsLoaded)); }
     }
 
     private async Task ExportSelectedAsync()
@@ -1268,23 +1515,70 @@ public sealed class MainViewModel : ViewModelBase
         if (_openPackage is null || SelectedAsset is null) return;
         if (!_oodleReady) { Status = "oo2core not loaded — cannot extract."; return; }
 
-        var ext = _lastSniff.Extension is { Length: > 0 } e ? e : "bin";
-        var dlg = new SaveFileDialog
-        {
-            FileName = $"{SelectedAsset.Entry.Key:x16}.{ext}",
-            Filter = $"Detected ({ext})|*.{ext}|Raw asset (*.bin)|*.bin|All files (*.*)|*.*",
-        };
-        if (dlg.ShowDialog() != true) return;
+        var entry = SelectedAsset.Entry;
+        var pkg = _openPackage;                       // capture — don't race a package switch
+        // CDN stubs aren't installed locally — extracting would just throw. Say so plainly.
+        if (!pkg.IsOnDisk(entry)) { Status = "CDN stub — not installed locally, nothing to extract."; return; }
 
         try
         {
-            var entry = SelectedAsset.Entry;
-            var pkg = _openPackage;                       // capture — don't race a package switch
             var bytes = await Task.Run(() => pkg.Extract(entry));
+            // Sniff the ACTUAL extracted bytes for the suggested extension, rather than relying
+            // on the preview pipeline having run (right-click export can fire before it does).
+            var ext = AssetSniffer.Detect(bytes).Extension is { Length: > 0 } e ? e : "bin";
+            var dlg = new SaveFileDialog
+            {
+                FileName = $"{entry.Key:x16}.{ext}",
+                Filter = $"Detected ({ext})|*.{ext}|Raw asset (*.bin)|*.bin|All files (*.*)|*.*",
+            };
+            if (dlg.ShowDialog() != true) return;
             await File.WriteAllBytesAsync(dlg.FileName, bytes);
             Status = $"Exported {Format.Bytes(bytes.Length)} → {Path.GetFileName(dlg.FileName)}";
         }
         catch (Exception ex) { Status = $"Export failed: {ex.Message}"; }
+    }
+
+    /// <summary>Export several selected assets (raw) to a chosen folder, skipping CDN stubs.</summary>
+    public async Task ExportSelectedAssetsAsync(IReadOnlyList<AssetRow> rows)
+    {
+        if (_openPackage is null || rows.Count == 0) return;
+        if (!_oodleReady) { Status = "oo2core not loaded — cannot extract."; return; }
+
+        var dlg = new OpenFolderDialog { Title = $"Export {rows.Count:N0} selected asset(s) to…" };
+        if (dlg.ShowDialog() != true || dlg.FolderName is not { Length: > 0 } outDir) return;
+
+        var pkg = _openPackage;
+        var entries = rows.Select(r => r.Entry).ToArray();
+        IsBusy = true; Progress = 0;
+        int ok = 0, skip = 0;
+        try
+        {
+            await Task.Run(() =>
+            {
+                for (int i = 0; i < entries.Length; i++)
+                {
+                    var e = entries[i];
+                    if (!pkg.IsOnDisk(e)) { skip++; }           // CDN stub — not installed
+                    else
+                        try
+                        {
+                            var bytes = pkg.Extract(e);
+                            var ext = AssetSniffer.Detect(bytes).Extension is { Length: > 0 } x ? x : "bin";
+                            File.WriteAllBytes(Path.Combine(outDir, $"{e.Key:x16}.{ext}"), bytes);
+                            ok++;
+                        }
+                        catch { skip++; }
+                    if ((i & 0x1F) == 0)
+                    {
+                        double p = 100.0 * (i + 1) / entries.Length;
+                        System.Windows.Application.Current.Dispatcher.Invoke(() => Progress = p);
+                    }
+                }
+            });
+            Status = $"Exported {ok:N0} of {rows.Count:N0} selected → {outDir}" + (skip > 0 ? $"  ({skip:N0} CDN/failed skipped)" : "");
+        }
+        catch (Exception ex) { Status = $"Export failed: {ex.Message}"; }
+        finally { IsBusy = false; Progress = 0; }
     }
 
     private async Task ExportPackageAsync()

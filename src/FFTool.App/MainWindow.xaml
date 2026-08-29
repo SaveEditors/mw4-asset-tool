@@ -7,12 +7,14 @@
         MinHeight="640" MinWidth="1024"
         Background="{StaticResource BgBaseBrush}"
         TextOptions.TextFormattingMode="Ideal"
-        FontFamily="{StaticResource UiFont}">
+        FontFamily="{StaticResource UiFont}"
+        AllowDrop="True" DragOver="Window_DragOver" DragLeave="Window_DragLeave" Drop="Window_Drop">
 
     <Window.InputBindings>
         <KeyBinding Modifiers="Ctrl" Key="O" Command="{Binding ImportCommand}"/>
         <KeyBinding Modifiers="Ctrl" Key="E" Command="{Binding ExportAssetCommand}"/>
         <KeyBinding Modifiers="Ctrl+Shift" Key="E" Command="{Binding ExportPackageCommand}"/>
+        <KeyBinding Key="Escape" Command="{Binding ResetViewCommand}"/>
     </Window.InputBindings>
 
     <Grid>
@@ -61,11 +63,14 @@
                             Command="{Binding ExportImagesAllCommand}"
                             ToolTip="Export EVERY package's detected images as PNG + DDS (large)"/>
                     <Button Content="Export package…" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportPackageCommand}"/>
+                            Command="{Binding ExportPackageCommand}"
+                            ToolTip="Export the whole selected package's raw assets  (Ctrl+Shift+E)"/>
                     <Button Content="Export game…" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
-                            Command="{Binding ExportGameCommand}"/>
+                            Command="{Binding ExportGameCommand}"
+                            ToolTip="Export every package's raw assets (large)"/>
                     <Button Content="Import folder…" Style="{StaticResource AccentButton}"
-                            Command="{Binding ImportCommand}"/>
+                            Command="{Binding ImportCommand}"
+                            ToolTip="Index a game directory containing .xpak / .xsub  (Ctrl+O)"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -92,11 +97,45 @@
                                       Click="ShowContent_Click" Style="{StaticResource ViewToggle}" Margin="4,0,0,0"/>
                     </StackPanel>
 
-                    <!-- Packages (xpak) -->
-                    <DataGrid Style="{StaticResource DarkDataGrid}" ItemsSource="{Binding Packages}"
-                              SelectedItem="{Binding SelectedPackage}"
+                    <!-- Package quick-filter (visible in Packages view) -->
+                    <Grid DockPanel.Dock="Top" Margin="10,0,10,6"
+                          Visibility="{Binding ShowPackages, Converter={x:Static local:BoolToVis.Instance}}">
+                        <TextBox x:Name="PackageFilterBox" Height="26" VerticalContentAlignment="Center"
+                                 Text="{Binding PackageFilter, UpdateSourceTrigger=PropertyChanged, Delay=120}"
+                                 Background="{StaticResource SurfaceRaisedBrush}" Foreground="{StaticResource TextPrimaryBrush}"
+                                 CaretBrush="{StaticResource AccentBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                 BorderThickness="1" Padding="8,0" FontSize="12"
+                                 ToolTip="Filter packages by name or category"/>
+                        <TextBlock Text="Filter packages…" Foreground="{StaticResource TextDisabledBrush}"
+                                   FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text, ElementName=PackageFilterBox}" Value="">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+
+                    <!-- Packages (xpak) — disabled during import/export so the open package can't be
+                         disposed out from under a running extraction. -->
+                    <DataGrid Style="{StaticResource DarkDataGrid}" ItemsSource="{Binding PackagesView}"
+                              SelectedItem="{Binding SelectedPackage}" IsEnabled="{Binding NotBusy}"
                               Visibility="{Binding ShowPackages, Converter={x:Static local:BoolToVis.Instance}}">
                         <DataGrid.Columns>
+                            <DataGridTemplateColumn Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="●" Foreground="{Binding CategoryBrush}" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="2,0,0,0"
+                                                   ToolTip="{Binding Content}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="Auto"/>
                             <DataGridTextColumn Header="Content" Binding="{Binding Content}" Width="*">
                                 <DataGridTextColumn.ElementStyle>
@@ -105,11 +144,33 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="Auto"/>
+                            <DataGridTextColumn Header="Assets" Binding="{Binding AssetsText}" Width="Auto"
+                                                SortMemberPath="AssetCountValue">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+                                        <Setter Property="HorizontalAlignment" Value="Right"/>
+                                        <Setter Property="FontFamily" Value="{StaticResource MonoFont}"/>
+                                        <Setter Property="FontSize" Value="11"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="CDN" Binding="{Binding CdnText}" Width="Auto"
+                                                SortMemberPath="OffDiskValue">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="#FFFBBF24"/>
+                                        <Setter Property="HorizontalAlignment" Value="Right"/>
+                                        <Setter Property="FontFamily" Value="{StaticResource MonoFont}"/>
+                                        <Setter Property="FontSize" Value="11"/>
+                                        <Setter Property="ToolTip" Value="CDN-only stubs — streamed, not installed locally (cannot be extracted)"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
                         </DataGrid.Columns>
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
-                                <Setter Property="ToolTip" Value="{Binding Content}"/>
+                                <Setter Property="ToolTip" Value="{Binding CountsTip}"/>
                             </Style>
                         </DataGrid.RowStyle>
                     </DataGrid>
@@ -222,6 +283,7 @@
                         </StackPanel>
                     </Grid>
                 </Border>
+                <Grid>
                 <TabControl x:Name="AssetTabs" Background="{StaticResource SurfaceBrush}" BorderThickness="0"
                             Style="{StaticResource DarkTabControl}">
                   <TabItem Header="Browse" Style="{StaticResource DarkTabItem}">
@@ -273,7 +335,19 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="Auto"/>
+                            <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="Auto">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <!-- CDN stubs stand out amber and dimmed: not installed, not extractable. -->
+                                            <DataTrigger Binding="{Binding IsOffDisk}" Value="True">
+                                                <Setter Property="Foreground" Value="#FFFBBF24"/>
+                                                <Setter Property="ToolTip" Value="CDN-only stub — streamed, not installed locally (cannot be extracted)"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
                             <DataGridTextColumn Header="Dims" Binding="{Binding Dims}" Width="Auto"/>
                             <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="Auto"/>
                             <DataGridTextColumn Header="Packed" Binding="{Binding Packed}" Width="Auto"/>
@@ -296,6 +370,9 @@
                              VirtualizingPanel.IsVirtualizing="True"
                              VirtualizingPanel.VirtualizationMode="Recycling"
                              Visibility="{Binding GridMode, Converter={x:Static local:BoolToVis.Instance}}">
+                        <ListBox.InputBindings>
+                            <KeyBinding Modifiers="Ctrl" Key="C" Command="{Binding CopyHashCommand}"/>
+                        </ListBox.InputBindings>
                         <ListBox.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <vwp:VirtualizingWrapPanel Orientation="Horizontal" SpacingMode="Uniform"/>
@@ -348,6 +425,19 @@
                 </Grid>
                   </TabItem>
                 </TabControl>
+
+                    <!-- Center empty-state: shown when no package's assets are loaded. -->
+                    <Border Background="{StaticResource SurfaceBrush}" IsHitTestVisible="False"
+                            Visibility="{Binding NoAssetsLoaded, Converter={x:Static local:BoolToVis.Instance}}">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420">
+                            <TextBlock Text="No package loaded" FontSize="16" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                            <TextBlock TextWrapping="Wrap" TextAlignment="Center" Margin="0,8,0,0" FontSize="13"
+                                       Foreground="{StaticResource TextDisabledBrush}"
+                                       Text="Pick a package from the left to list its assets, then switch to the Grid to browse decoded thumbnails. Use Import folder… (Ctrl+O) to point at a different game directory."/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </DockPanel>
 
             <GridSplitter Grid.Column="3" Width="1" HorizontalAlignment="Stretch"
@@ -358,6 +448,18 @@
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
                 <StackPanel>
                     <TextBlock Text="INSPECTOR" Style="{StaticResource PaneHeader}"/>
+
+                    <!-- Empty-state guidance when nothing is selected. -->
+                    <StackPanel Margin="14,8" Visibility="{Binding NothingSelected, Converter={x:Static local:BoolToVis.Instance}}">
+                        <TextBlock Text="No asset selected" Foreground="{StaticResource TextSecondaryBrush}"
+                                   FontWeight="SemiBold" FontSize="13"/>
+                        <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12"
+                                   Foreground="{StaticResource TextDisabledBrush}"
+                                   Text="Select a package on the left, then pick an asset to inspect it. Images show a live preview you can export to PNG or DDS; other assets show detected type and a hex view."/>
+                        <TextBlock TextWrapping="Wrap" Margin="0,10,0,0" FontSize="12"
+                                   Foreground="{StaticResource TextDisabledBrush}"
+                                   Text="Amber CDN entries are streamed on demand and are not installed locally."/>
+                    </StackPanel>
 
                     <!-- Fastfile structure (when a Content/Maps fastfile is selected) -->
                     <StackPanel Margin="12,4" Visibility="{Binding HasFastfileInfo,
@@ -392,18 +494,51 @@
 
                     <StackPanel Margin="12,4" Visibility="{Binding HasAsset,
                                 Converter={x:Static local:BoolToVis.Instance}}">
-                        <TextBlock Text="{Binding SelectedAsset.Hash}" FontFamily="{StaticResource MonoFont}"
-                                   Foreground="{StaticResource AccentBrush}" FontSize="14" TextWrapping="Wrap"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding SelectedAsset.Hash}" FontFamily="{StaticResource MonoFont}"
+                                       Foreground="{StaticResource AccentBrush}" FontSize="14" TextWrapping="Wrap"
+                                       VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Content="Copy" Style="{StaticResource GhostButton}"
+                                    Command="{Binding CopyHashCommand}" Margin="8,0,0,0" Padding="8,2"
+                                    VerticalAlignment="Top" ToolTip="Copy this asset's hash to the clipboard"/>
+                        </Grid>
                         <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
                                    Text="{Binding SelectedAsset.Size, StringFormat='Decompressed: {0}'}"/>
                         <TextBlock Style="{StaticResource Caption}"
                                    Text="{Binding SelectedAsset.Packed, StringFormat='Compressed: {0}'}"/>
-                        <TextBlock Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}"
-                                   Text="{Binding SelectedAsset.Offset, StringFormat='Global offset: {0}'}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource Caption}" FontFamily="{StaticResource MonoFont}"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding SelectedAsset.Offset, StringFormat='Global offset: {0}'}"/>
+                            <Button Grid.Column="1" Content="Copy" Style="{StaticResource GhostButton}"
+                                    Command="{Binding CopyOffsetCommand}" Margin="8,0,0,0" Padding="8,2"
+                                    VerticalAlignment="Center" ToolTip="Copy this asset's global offset to the clipboard"/>
+                        </Grid>
                         <TextBlock Margin="0,10,0,2" FontWeight="SemiBold" FontSize="12"
                                    Foreground="{StaticResource TextSecondaryBrush}" Text="DETECTED"/>
                         <TextBlock Text="{Binding DetectedType}" Foreground="{StaticResource SuccessBrush}"
                                    TextWrapping="Wrap"/>
+
+                        <!-- CDN stub notice: shown when the selected asset is streamed, not installed. -->
+                        <Border Margin="0,10,0,0" CornerRadius="4" BorderThickness="1" Padding="10,8"
+                                Background="#22FBBF24" BorderBrush="#66FBBF24"
+                                Visibility="{Binding IsSelectedOffDisk, Converter={x:Static local:BoolToVis.Instance}}">
+                            <StackPanel>
+                                <TextBlock Text="⬦ CDN-only asset" FontWeight="SemiBold" FontSize="12"
+                                           Foreground="#FFFBBF24"/>
+                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" FontSize="12"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           Text="This asset is streamed from the CDN on demand and is not installed on disk, so there is nothing to extract. It will download into the package only when the game needs it."/>
+                            </StackPanel>
+                        </Border>
 
                         <!-- Texture preview -->
                         <StackPanel Visibility="{Binding HasCandidates,
@@ -513,6 +648,21 @@
                                  Visibility="{Binding IsBusy, Converter={x:Static local:BoolToVis.Instance}}"/>
                 </StackPanel>
             </Grid>
+        </Border>
+
+        <!-- Drag-and-drop overlay: shown while a folder is dragged over the window. -->
+        <Border x:Name="DropOverlay" Grid.RowSpan="3" Visibility="Collapsed" IsHitTestVisible="False"
+                Background="#CC0B0E12">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="10"
+                    BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" Padding="40,28"
+                    Background="{StaticResource SurfaceRaisedBrush}">
+                <StackPanel>
+                    <TextBlock Text="⤓  Drop to import" FontSize="20" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimaryBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Release to index this game folder" FontSize="13" Margin="0,6,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
         </Border>
     </Grid>
 </Window>

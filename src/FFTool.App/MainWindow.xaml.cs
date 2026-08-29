@@ -26,20 +26,42 @@ public partial class MainWindow : Window
 
         // Optional CLI: --import <dir> [--select <packageName>] [--screenshot <path>]
         var args = Environment.GetCommandLineArgs();
-        string? shotPath = null;
+        string? shotPath = null, importDir = null, selectName = null;
         bool cliImport = false;
         for (int i = 1; i < args.Length - 1; i++)
         {
-            if (args[i] == "--import") { vm.ImportDirectory(args[i + 1]); cliImport = true; }
-            else if (args[i] == "--select") vm.SelectPackageByName(args[i + 1]);
+            if (args[i] == "--import") { importDir = args[i + 1]; cliImport = true; }
+            else if (args[i] == "--select") selectName = args[i + 1];
             else if (args[i] == "--screenshot") shotPath = args[i + 1];
             else if (args[i] == "--asset") _shotAssetHash = Convert.ToUInt64(args[i + 1], 16);
             else if (args[i] == "--names") vm.LoadNamesFile(args[i + 1]);
         }
         bool gridShot = args.Contains("--grid");
 
-        // Right-click actions on the main asset table (copy / jump).
-        Loaded += (_, _) => { if (MainTable is not null) MainTable.ContextMenu = BuildRowContextMenu(); };
+        // CLI import runs async now — wait for packages before selecting, so screenshot/--select work.
+        if (importDir is not null)
+            _ = Dispatcher.InvokeAsync(async () =>
+            {
+                await vm.ImportDirectoryAsync(importDir);
+                if (selectName is not null) vm.SelectPackageByName(selectName);
+            });
+
+        // Right-click actions on the asset table AND the thumbnail grid (copy / export / jump).
+        // Each Selector gets its own menu instance (a ContextMenu can't be shared) and a
+        // right-button handler so the menu targets the row/tile actually under the cursor.
+        Loaded += (_, _) =>
+        {
+            if (MainTable is not null)
+            {
+                MainTable.ContextMenu = BuildRowContextMenu();
+                MainTable.PreviewMouseRightButtonDown += SelectItemUnderMouseForContextMenu;
+            }
+            if (GridView is not null)
+            {
+                GridView.ContextMenu = BuildRowContextMenu();
+                GridView.PreviewMouseRightButtonDown += SelectItemUnderMouseForContextMenu;
+            }
+        };
 
         // --grid activates grid mode once assets load (independent of screenshot).
         if (gridShot && shotPath is null)
@@ -49,8 +71,8 @@ public partial class MainWindow : Window
                 vm.GridMode = true;
             };
 
-        // Auto-restore the last game directory on a normal launch.
-        if (!cliImport) vm.RestoreLastSession();
+        // Auto-restore the last game directory + remember window geometry on a normal launch.
+        if (!cliImport) { RestoreWindowGeometry(); _ = vm.RestoreLastSession(); }
 
         if (shotPath is not null)
         {
@@ -91,6 +113,81 @@ public partial class MainWindow : Window
                 System.Windows.Application.Current.Shutdown();
             };
         }
+    }
+
+    // ── Remember window geometry across launches (normal launch only) ────────────
+    // Geometry uses the SAME Settings instance the view-model holds (single source of truth),
+    // and is kept continuously current by the move/resize handlers — so any settings save
+    // (from either side) persists the real window bounds, even on a crash/kill between changes.
+    private Settings? _cfg;
+
+    private void RestoreWindowGeometry()
+    {
+        _cfg = (DataContext as MainViewModel)?.Settings ?? Settings.Load();
+        if (_cfg.WindowWidth is > 400 and < 10000) Width = _cfg.WindowWidth;
+        if (_cfg.WindowHeight is > 300 and < 10000) Height = _cfg.WindowHeight;
+        // Only restore position if it lands on a visible screen (avoid off-screen windows).
+        double vs = System.Windows.SystemParameters.VirtualScreenLeft, vt = System.Windows.SystemParameters.VirtualScreenTop;
+        double vw = System.Windows.SystemParameters.VirtualScreenWidth, vh = System.Windows.SystemParameters.VirtualScreenHeight;
+        if (_cfg.WindowLeft is { } l && _cfg.WindowTop is { } t
+            && l >= vs - 8 && l < vs + vw - 100 && t >= vt - 8 && t < vt + vh - 60)
+        {
+            WindowStartupLocation = System.Windows.WindowStartupLocation.Manual;
+            Left = l; Top = t;
+        }
+        if (_cfg.WindowMaximized) WindowState = System.Windows.WindowState.Maximized;
+
+        // Keep the shared settings' geometry live (in memory) as the window moves/resizes.
+        LocationChanged += (_, _) => UpdateGeometry();
+        SizeChanged += (_, _) => UpdateGeometry();
+        StateChanged += (_, _) => UpdateGeometry();
+        Closing += (_, _) => { UpdateGeometry(); _cfg!.Save(); };
+    }
+
+    private void UpdateGeometry()
+    {
+        if (_cfg is null) return;
+        _cfg.WindowMaximized = WindowState == System.Windows.WindowState.Maximized;
+        // RestoreBounds holds the normal (non-maximized) rect even when maximized/minimized.
+        var r = WindowState == System.Windows.WindowState.Normal
+            ? new System.Windows.Rect(Left, Top, Width, Height) : RestoreBounds;
+        if (r.Width is > 400 and < 10000) _cfg.WindowWidth = r.Width;
+        if (r.Height is > 300 and < 10000) _cfg.WindowHeight = r.Height;
+        if (!double.IsNaN(r.Left) && !double.IsNaN(r.Top)) { _cfg.WindowLeft = r.Left; _cfg.WindowTop = r.Top; }
+    }
+
+    // ── Drag-and-drop a game folder (or a file within it) to import ──────────────
+    private static bool HasFolderDrop(System.Windows.DragEventArgs e) =>
+        e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)
+        && e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] { Length: > 0 };
+
+    private void Window_DragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        bool ok = HasFolderDrop(e);
+        e.Effects = ok ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
+        if (DropOverlay is not null)
+            DropOverlay.Visibility = ok ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+        e.Handled = true;
+    }
+
+    private void Window_DragLeave(object sender, System.Windows.DragEventArgs e)
+    {
+        if (DropOverlay is not null) DropOverlay.Visibility = System.Windows.Visibility.Collapsed;
+    }
+
+    private void Window_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (DropOverlay is not null) DropOverlay.Visibility = System.Windows.Visibility.Collapsed;
+        if (DataContext is not MainViewModel vm || !HasFolderDrop(e)) return;
+        e.Handled = true;
+        try
+        {
+            var paths = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop);
+            var p = paths[0];
+            string dir = System.IO.Directory.Exists(p) ? p : System.IO.Path.GetDirectoryName(p) ?? p;
+            vm.ImportDirectory(dir);   // async — never blocks the UI thread now
+        }
+        catch (Exception ex) { vm.Status = $"Could not read the dropped item: {ex.Message}"; }
     }
 
     // ── Jump to address → new tab, sorted by offset, scrolled to target ──────────
@@ -187,19 +284,49 @@ public partial class MainWindow : Window
     private System.Windows.Controls.ContextMenu BuildRowContextMenu()
     {
         var m = new System.Windows.Controls.ContextMenu();
+        // Single-target actions operate on the row the menu was opened on (captured by the
+        // right-button handler), falling back to the Selector's primary SelectedItem.
+        AssetRow? Target(System.Windows.Controls.MenuItem mi) =>
+            _contextRow
+            ?? ((mi.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget
+                    is System.Windows.Controls.Primitives.Selector sel ? sel.SelectedItem as AssetRow : null);
         void Item(string header, Action<AssetRow> act)
         {
             var mi = new System.Windows.Controls.MenuItem { Header = header };
-            mi.Click += (s, _) =>
-            {
-                if (((System.Windows.Controls.ContextMenu)mi.Parent).PlacementTarget is System.Windows.Controls.DataGrid dg
-                    && dg.SelectedItem is AssetRow r) act(r);
-            };
+            mi.Click += (_, _) => { if (Target(mi) is { } r) act(r); };
             m.Items.Add(mi);
         }
-        Item("Copy name / hash", r => System.Windows.Clipboard.SetText(r.DisplayName));
-        Item("Copy hash", r => System.Windows.Clipboard.SetText(r.Hash));
-        Item("Copy offset", r => System.Windows.Clipboard.SetText(r.Offset));
+        void Sep() => m.Items.Add(new System.Windows.Controls.Separator());
+
+        Item("Copy name / hash", r => CopyText(r.DisplayName));
+        Item("Copy hash", r => CopyText(r.Hash));
+        Item("Copy offset", r => CopyText(r.Offset));
+        Sep();
+        Item("Export raw asset…", r =>
+        {
+            if (DataContext is MainViewModel vm) { vm.SelectedAsset = r; vm.ExportAssetCommand.Execute(null); }
+        });
+        // Export ALL selected rows (enabled only when 2+ are selected).
+        var exportSel = new System.Windows.Controls.MenuItem { Header = "Export selected…" };
+        exportSel.Click += (_, _) =>
+        {
+            if ((exportSel.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget
+                    is System.Windows.Controls.Primitives.Selector sel
+                && DataContext is MainViewModel vm)
+            {
+                var rows = SelectedItemsOf(sel)?.OfType<AssetRow>().ToList() ?? [];
+                if (rows.Count > 0) _ = vm.ExportSelectedAssetsAsync(rows);
+            }
+        };
+        m.Items.Add(exportSel);
+        // Reflect the selection count in the header when the menu opens.
+        m.Opened += (_, _) =>
+        {
+            int n = SelectedItemsOf(m.PlacementTarget as System.Windows.Controls.Primitives.Selector)?.Count ?? 0;
+            exportSel.Header = n > 1 ? $"Export {n} selected…" : "Export selected…";
+            exportSel.IsEnabled = n > 1;
+        };
+        Sep();
         Item("Jump to this address (new tab)", r =>
         {
             if (DataContext is MainViewModel vm) OpenAddressTab(vm, r.Entry.Offset);
@@ -214,6 +341,36 @@ public partial class MainWindow : Window
         });
         return m;
     }
+
+    private static void CopyText(string text)
+    {
+        try { System.Windows.Clipboard.SetDataObject(text, copy: true); } catch { /* clipboard busy */ }
+    }
+
+    // Right-click should act on the row/tile under the cursor: select it before the menu opens —
+    // but preserve an existing multi-selection when right-clicking one of the selected items.
+    private void SelectItemUnderMouseForContextMenu(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Primitives.Selector selector) return;
+        var dep = e.OriginalSource as System.Windows.DependencyObject;
+        while (dep is not null and not System.Windows.Controls.ListBoxItem and not System.Windows.Controls.DataGridRow)
+            dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+        if (dep is not System.Windows.FrameworkElement { DataContext: AssetRow row }) return;
+        _contextRow = row;   // single-target menu actions operate on the row actually under the cursor
+        var selected = SelectedItemsOf(selector);
+        if (selected is not null && selected.Contains(row)) return; // keep the multi-selection intact
+        selector.SelectedItem = row;
+    }
+
+    private AssetRow? _contextRow;   // the asset row the context menu was opened on
+
+    /// <summary>The SelectedItems list of a ListBox or DataGrid (Selector base lacks it).</summary>
+    private static System.Collections.IList? SelectedItemsOf(System.Windows.Controls.Primitives.Selector? s) => s switch
+    {
+        System.Windows.Controls.ListBox lb => lb.SelectedItems,
+        System.Windows.Controls.DataGrid dg => dg.SelectedItems,
+        _ => null,
+    };
 
     // Double-click a candidate render → user says "this is the correct format" → log + apply.
     private void Candidate_DoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
