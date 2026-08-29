@@ -230,6 +230,32 @@ public sealed class MainViewModel : ViewModelBase
     public ObservableCollection<ContentGroupRow> Content { get; } = [];
     public ObservableCollection<ContentEntry> ContentFiles { get; } = [];
 
+    /// <summary>Recently-imported game folders (most recent first) for the "Recent" menu.</summary>
+    public ObservableCollection<string> RecentFolders { get; } = [];
+    public bool HasRecentFolders => RecentFolders.Count > 0;
+
+    /// <summary>Open a folder from the recents list.</summary>
+    public void OpenRecent(string dir) => ImportDirectory(dir);
+
+    /// <summary>Empty the recent-folders list.</summary>
+    public void ClearRecentFolders()
+    {
+        RecentFolders.Clear();
+        Raise(nameof(HasRecentFolders));
+        _settings.RecentFolders = [];
+        _settings.Save();
+    }
+
+    private void AddRecentFolder(string dir)
+    {
+        RecentFolders.Remove(dir);
+        RecentFolders.Insert(0, dir);
+        while (RecentFolders.Count > 8) RecentFolders.RemoveAt(RecentFolders.Count - 1);
+        Raise(nameof(HasRecentFolders));
+        _settings.RecentFolders = [.. RecentFolders];
+        _settings.Save();
+    }
+
     private List<ContentEntry> _allContent = [];
 
     private bool _showContent;
@@ -358,6 +384,10 @@ public sealed class MainViewModel : ViewModelBase
         _assetsSource.Filter += (_, e) => e.Accepted = Match((AssetRow)e.Item);
         _assetsSource.Source = _allAssets;
 
+        foreach (var f in _settings.RecentFolders.Where(Directory.Exists)) RecentFolders.Add(f);
+        _settings.RecentFolders = [.. RecentFolders];   // prune dead paths from the persisted list
+        Raise(nameof(HasRecentFolders));
+
         _packagesSource.Source = Packages;
         _packagesSource.Filter += (_, e) =>
         {
@@ -385,10 +415,48 @@ public sealed class MainViewModel : ViewModelBase
         ExportImagesAllCommand = new RelayCommand(() => _ = ExportImagesAsync(true), () => Packages.Count > 0 && _oodleReady && !IsBusy);
         CopyHashCommand = new RelayCommand(() => CopyToClipboard(SelectedAsset?.Hash, "hash"), () => SelectedAsset is not null);
         CopyOffsetCommand = new RelayCommand(() => CopyToClipboard(SelectedAsset?.Offset, "offset"), () => SelectedAsset is not null);
+        CopyImageCommand = new RelayCommand(CopyImage, () => Preview is not null);
     }
 
     public ICommand CopyHashCommand { get; }
     public ICommand CopyOffsetCommand { get; }
+    public ICommand CopyImageCommand { get; }
+
+    /// <summary>Copy the decoded preview image to the clipboard.</summary>
+    private void CopyImage()
+    {
+        if (Preview is null) return;
+        try { System.Windows.Clipboard.SetImage(Preview); Status = "Preview image copied to clipboard."; }
+        catch (Exception ex) { Status = $"Copy image failed: {ex.Message}"; }
+    }
+
+    // ── "Reveal in Explorer" for the last export ────────────────────────────────
+    private string? _lastExportPath;
+    public bool HasLastExport => _lastExportPath is not null;
+    private void SetLastExport(string path) { _lastExportPath = path; Raise(nameof(HasLastExport)); }
+
+    public ICommand RevealExportCommand => _revealExportCommand ??= new RelayCommand(() =>
+    {
+        if (_lastExportPath is null) return;
+        try
+        {
+            // Full path to explorer.exe (avoids PATH resolution). Quote the path so spaces work.
+            var explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+            var psi = new System.Diagnostics.ProcessStartInfo(explorer) { UseShellExecute = true };
+            // explorer's /select mishandles commas in the path, so fall back to opening the folder there.
+            if (File.Exists(_lastExportPath) && !_lastExportPath.Contains(','))
+                psi.Arguments = $"/select,\"{_lastExportPath}\"";
+            else
+            {
+                var folder = File.Exists(_lastExportPath) ? Path.GetDirectoryName(_lastExportPath) : _lastExportPath;
+                if (string.IsNullOrEmpty(folder)) return;
+                psi.Arguments = $"\"{folder}\"";
+            }
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex) { Status = $"Reveal failed: {ex.Message}"; }
+    });
+    private ICommand? _revealExportCommand;
 
     /// <summary>
     /// Copy a value to the clipboard and confirm in the status bar. The Windows clipboard is
@@ -514,6 +582,7 @@ public sealed class MainViewModel : ViewModelBase
         {
             var dds = DdsWriter.FromBlob(_selectedBytes, g);
             File.WriteAllBytes(dlg.FileName, dds);
+            SetLastExport(dlg.FileName);
             Status = $"Saved DDS ({g.Format} {g.Width}×{g.Height}) → {Path.GetFileName(dlg.FileName)}";
         }
         catch (Exception ex) { Status = $"DDS export failed: {ex.Message}"; }
@@ -793,8 +862,8 @@ public sealed class MainViewModel : ViewModelBase
         {
             var enc = new PngBitmapEncoder();
             enc.Frames.Add(BitmapFrame.Create(Preview));
-            using var fs = File.Create(dlg.FileName);
-            enc.Save(fs);
+            using (var fs = File.Create(dlg.FileName)) enc.Save(fs);
+            SetLastExport(dlg.FileName);
             Status = $"Saved PNG → {Path.GetFileName(dlg.FileName)}";
         }
         catch (Exception ex) { Status = $"PNG export failed: {ex.Message}"; }
@@ -853,6 +922,16 @@ public sealed class MainViewModel : ViewModelBase
 
     // Thumbnail size for the grid view.
     public IReadOnlyList<string> ThumbSizes { get; } = ["Small", "Normal", "Large", "X-Large", "Huge"];
+
+    /// <summary>Step the thumbnail size up (+1) or down (−1) — used by Ctrl+scroll in the grid.</summary>
+    public void StepThumbSize(int delta)
+    {
+        int i = 0;
+        for (int k = 0; k < ThumbSizes.Count; k++) if (ThumbSizes[k] == _thumbSizeName) { i = k; break; }
+        int ni = Math.Clamp(i + delta, 0, ThumbSizes.Count - 1);
+        if (ni != i) ThumbSizeName = ThumbSizes[ni];
+    }
+
     private string _thumbSizeName = "Normal";
     public string ThumbSizeName
     {
@@ -1345,6 +1424,7 @@ public sealed class MainViewModel : ViewModelBase
             Summary = $"{built.Item4} package sets · {built.xsubTotal} xsub · {Format.Bytes(built.grand)} · " +
                       (_oodleReady ? "oo2core ✓" : "oo2core ✗ (extraction disabled)");
             Status = $"Indexed {built.Item4} packages · {Content.Count} content groups. Select a package to list assets.";
+            AddRecentFolder(dir);
 
             // Tracked changes from the last update (filters/badges), then the silent update check.
             LoadUpdateChanges();
@@ -1533,6 +1613,7 @@ public sealed class MainViewModel : ViewModelBase
             };
             if (dlg.ShowDialog() != true) return;
             await File.WriteAllBytesAsync(dlg.FileName, bytes);
+            SetLastExport(dlg.FileName);
             Status = $"Exported {Format.Bytes(bytes.Length)} → {Path.GetFileName(dlg.FileName)}";
         }
         catch (Exception ex) { Status = $"Export failed: {ex.Message}"; }
@@ -1575,6 +1656,7 @@ public sealed class MainViewModel : ViewModelBase
                     }
                 }
             });
+            SetLastExport(outDir);
             Status = $"Exported {ok:N0} of {rows.Count:N0} selected → {outDir}" + (skip > 0 ? $"  ({skip:N0} CDN/failed skipped)" : "");
         }
         catch (Exception ex) { Status = $"Export failed: {ex.Message}"; }

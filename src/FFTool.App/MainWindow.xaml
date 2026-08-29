@@ -68,6 +68,10 @@
                     <Button Content="Export game…" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
                             Command="{Binding ExportGameCommand}"
                             ToolTip="Export every package's raw assets (large)"/>
+                    <Button x:Name="RecentButton" Content="Recent ▾" Margin="0,0,8,0" Style="{StaticResource GhostButton}"
+                            Click="RecentFolders_Click"
+                            Visibility="{Binding HasRecentFolders, Converter={x:Static local:BoolToVis.Instance}}"
+                            ToolTip="Re-open a recently imported game folder"/>
                     <Button Content="Import folder…" Style="{StaticResource AccentButton}"
                             Command="{Binding ImportCommand}"
                             ToolTip="Index a game directory containing .xpak / .xsub  (Ctrl+O)"/>
@@ -567,6 +571,9 @@
                                 <Button Content="Save DDS…" Style="{StaticResource GhostButton}"
                                         Command="{Binding ExportDdsCommand}" Margin="8,0,0,0"
                                         ToolTip="Export as a valid DDS (opens in Photoshop/GIMP/Paint.NET)"/>
+                                <Button Content="Copy image" Style="{StaticResource GhostButton}"
+                                        Command="{Binding CopyImageCommand}" Margin="8,0,0,0"
+                                        ToolTip="Copy the decoded image to the clipboard"/>
                             </StackPanel>
 
                             <!-- Format-detection test tool: show ALL interpretations; double-click the correct one (logged) -->
@@ -638,6 +645,10 @@
             <Grid Margin="12,0">
                 <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Style="{StaticResource Caption}"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="Reveal in Explorer" Style="{StaticResource GhostButton}" Margin="0,0,10,0"
+                            Padding="8,2" FontSize="11" Command="{Binding RevealExportCommand}"
+                            Visibility="{Binding HasLastExport, Converter={x:Static local:BoolToVis.Instance}}"
+                            ToolTip="Open the last export in Explorer"/>
                     <TextBlock Text="{Binding PreloadStatus}" Style="{StaticResource Caption}"
                                Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,10,0"
                                Visibility="{Binding IsPreloading, Converter={x:Static local:BoolToVis.Instance}}"/>

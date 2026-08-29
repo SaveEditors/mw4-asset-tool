@@ -17,6 +17,7 @@ namespace FFTool.App;
 public partial class MainWindow : Window
 {
     private ulong? _shotAssetHash;
+    private bool _gridWired;   // ensures the grid/table handlers are attached only once
 
     public MainWindow()
     {
@@ -51,6 +52,8 @@ public partial class MainWindow : Window
         // right-button handler so the menu targets the row/tile actually under the cursor.
         Loaded += (_, _) =>
         {
+            if (_gridWired) return;   // Loaded can fire again on hide/show — wire handlers once
+            _gridWired = true;
             if (MainTable is not null)
             {
                 MainTable.ContextMenu = BuildRowContextMenu();
@@ -60,6 +63,12 @@ public partial class MainWindow : Window
             {
                 GridView.ContextMenu = BuildRowContextMenu();
                 GridView.PreviewMouseRightButtonDown += SelectItemUnderMouseForContextMenu;
+                // Ctrl+scroll zooms the thumbnails instead of scrolling the list.
+                GridView.PreviewMouseWheel += (_, me) =>
+                {
+                    if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == 0) return;
+                    if (DataContext is MainViewModel vm) { vm.StepThumbSize(me.Delta > 0 ? 1 : -1); me.Handled = true; }
+                };
             }
         };
 
@@ -201,6 +210,28 @@ public partial class MainWindow : Window
     private void ToggleUpdatesFilter_Click(object sender, System.Windows.RoutedEventArgs e)
     {
         if (DataContext is MainViewModel vm) vm.ToggleUpdatesFilter();
+    }
+
+    private void RecentFolders_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || sender is not System.Windows.Controls.Button btn) return;
+        var menu = new System.Windows.Controls.ContextMenu { PlacementTarget = btn };
+        foreach (var dir in vm.RecentFolders)
+        {
+            var mi = new System.Windows.Controls.MenuItem { Header = dir };
+            var d = dir;   // capture
+            mi.Click += (_, _) => vm.OpenRecent(d);
+            menu.Items.Add(mi);
+        }
+        if (menu.Items.Count > 0)
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            var clear = new System.Windows.Controls.MenuItem { Header = "Clear recent folders" };
+            clear.Click += (_, _) => vm.ClearRecentFolders();
+            menu.Items.Add(clear);
+        }
+        btn.ContextMenu = menu;   // root it to the button so it inherits DataContext/resources
+        menu.IsOpen = menu.Items.Count > 0;
     }
 
     private void DoJump()
