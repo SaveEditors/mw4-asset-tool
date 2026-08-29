@@ -55,7 +55,6 @@ public sealed class KapiPackage : IDisposable
         }
 
         var data = new XsubDataReader(orderedXsub);
-        set.AssetCount = entries.Count;
         return new KapiPackage(set, index, entries, data);
     }
 
@@ -110,9 +109,6 @@ public sealed class KapiPackage : IDisposable
 
     /// <summary>False when the entry's offset points beyond the installed data (CDN-streamed).</summary>
     public bool IsOnDisk(KapiAssetEntry e) => _data.InRange(e.Offset);
-
-    /// <summary>Entries whose offset lands within the data files (extractable candidates).</summary>
-    public int InRangeCount => Entries.Count(e => _data.InRange(e.Offset));
 
     public void Dispose() => _data.Dispose();
 }

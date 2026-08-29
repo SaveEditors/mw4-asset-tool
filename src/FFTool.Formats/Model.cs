@@ -41,5 +41,4 @@ public sealed class PackageSet
     public required IReadOnlyList<string> XsubPaths { get; init; }
     public int Version { get; init; }
     public int SubVersion { get; init; }
-    public long AssetCount { get; set; }
 }
